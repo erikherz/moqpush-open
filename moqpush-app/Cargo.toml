@@ -1,0 +1,38 @@
+[package]
+name = "moqpush-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Reuse ingest library from moqcdn
+moqcdn-ingest = { workspace = true }
+
+# MoQ transport + catalog
+moq-lite = { workspace = true }
+moq-mux = { workspace = true }
+moq-native = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP client (worker auth + heartbeat + stats)
+reqwest = { workspace = true }
+
+# Serialization
+serde_json = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Random
+rand = { workspace = true }
+
+# URL
+url = { workspace = true }

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MoQpush — Push once, stream everywhere</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; }
+    .hero { text-align: center; padding: 80px 24px 40px; }
+    .logo { font-size: 3.2em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .logo span { color: #667eea; }
+    .tagline { color: #888; font-size: 1.15em; margin-bottom: 40px; }
+    .cta { display: flex; gap: 16px; justify-content: center; margin-bottom: 60px; }
+    .cta a { padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 1em; transition: all 0.2s; }
+    .cta a.primary { background: #667eea; color: #fff; }
+    .cta a.primary:hover { background: #5a6fd6; }
+    .cta a.secondary { background: #1a1a1a; color: #ccc; border: 1px solid #333; }
+    .cta a.secondary:hover { background: #222; }
+
+    /* Workflow */
+    .workflow-section { max-width: 960px; margin: 0 auto; padding: 0 24px 80px; }
+    .section-label { text-align: center; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.15em; color: #667eea; font-weight: 600; margin-bottom: 12px; }
+    .section-title { text-align: center; font-size: 1.5em; font-weight: 600; margin-bottom: 40px; color: #fff; }
+
+    .workflow { display: flex; align-items: flex-start; justify-content: center; gap: 0; flex-wrap: wrap; }
+    .step { flex: 0 0 160px; text-align: center; position: relative; }
+    .step-icon { width: 64px; height: 64px; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; font-size: 1.6em; }
+    .step-icon.ingest { background: #1a2744; color: #60a5fa; }
+    .step-icon.http { background: #2a1f3d; color: #a78bfa; }
+    .step-icon.cloud { background: #1a3328; color: #4ade80; }
+    .step-icon.orch { background: #3b2f1a; color: #fbbf24; }
+    .step-icon.play { background: #3b1a2e; color: #f472b6; }
+    .step-name { font-size: 0.85em; font-weight: 600; margin-bottom: 4px; color: #fff; }
+    .step-desc { font-size: 0.7em; color: #888; line-height: 1.4; }
+    .step-link { font-size: 0.65em; color: #667eea; text-decoration: none; display: block; margin-top: 4px; }
+    .step-link:hover { text-decoration: underline; }
+
+    .arrow { flex: 0 0 40px; display: flex; align-items: center; justify-content: center; color: #333; font-size: 1.2em; padding-top: 20px; }
+
+    /* Features */
+    .features { max-width: 800px; margin: 0 auto; padding: 0 24px 80px; }
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .feature { background: #111; border: 1px solid #1a1a1a; border-radius: 10px; padding: 20px; }
+    .feature h3 { font-size: 0.95em; margin-bottom: 6px; color: #fff; }
+    .feature p { font-size: 0.8em; color: #888; line-height: 1.5; }
+
+    .footer { text-align: center; padding: 40px 24px; border-top: 1px solid #1a1a1a; color: #525252; font-size: 0.8em; }
+    .footer a { color: #667eea; text-decoration: none; }
+
+    @media (max-width: 700px) {
+      .workflow { flex-direction: column; align-items: center; }
+      .arrow { transform: rotate(90deg); padding: 0; flex: 0 0 30px; }
+      .step { flex: none; width: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <div class="logo">Mo<span>Q</span>push</div>
+    <p class="tagline">Push once, stream everywhere — MoQ stream pre-positioning service</p>
+    <div class="cta">
+      <a href="/admin" class="primary">Dashboard</a>
+      <a href="https://github.com/erikherz/moqpush" class="secondary">GitHub</a>
+    </div>
+  </div>
+
+  <div class="workflow-section">
+    <div class="section-label">How It Works</div>
+    <div class="section-title">End-to-end ultra-low-latency streaming</div>
+    <div class="workflow">
+      <div class="step">
+        <div class="step-icon ingest">&#9881;</div>
+        <div class="step-name">Encoder</div>
+        <div class="step-desc">DASH-IF Ingest (CMAF-IF) from your encoder</div>
+        <a class="step-link" href="https://www.ateme.com/product-titan-software/" target="_blank">Ateme Titan Live</a>
+      </div>
+      <div class="arrow">&#10140;</div>
+      <div class="step">
+        <div class="step-icon http">&#8679;</div>
+        <div class="step-name">HTTP PUT</div>
+        <div class="step-desc">moqpush-app receives CMAF segments via HTTP PUT</div>
+      </div>
+      <div class="arrow">&#10140;</div>
+      <div class="step">
+        <div class="step-icon cloud">&#9729;</div>
+        <div class="step-name">Cloudflare MoQ</div>
+        <div class="step-desc">Published to Cloudflare's global MoQ relay network</div>
+        <a class="step-link" href="https://blog.cloudflare.com/moq/" target="_blank">MoQ Streaming</a>
+      </div>
+      <div class="arrow">&#10140;</div>
+      <div class="step">
+        <div class="step-icon orch">&#9741;</div>
+        <div class="step-name">MoQpush</div>
+        <div class="step-desc">Orchestrated edge servers pull streams to warm Cloudflare's cache</div>
+      </div>
+      <div class="arrow">&#10140;</div>
+      <div class="step">
+        <div class="step-icon play">&#9654;</div>
+        <div class="step-name">Playback</div>
+        <div class="step-desc">Shaka Player via WebTransport — instant, global playback</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="features">
+    <div class="section-label">Features</div>
+    <div class="section-title">Built for live production</div>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>Global Pre-positioning</h3>
+        <p>Edge servers in 5 regions pull your stream through Cloudflare, warming the network before viewers connect.</p>
+      </div>
+      <div class="feature">
+        <h3>Ultra-low Latency</h3>
+        <p>MoQ Transport (draft-14) over QUIC/WebTransport delivers sub-second glass-to-glass latency.</p>
+      </div>
+      <div class="feature">
+        <h3>Simple Ingest</h3>
+        <p>Standard DASH-IF CMAF ingest over HTTP PUT — works with any encoder supporting the spec.</p>
+      </div>
+      <div class="feature">
+        <h3>Real-time Stats</h3>
+        <p>Live publisher and player metrics, per-region warm status, and WebSocket-driven dashboards.</p>
+      </div>
+      <div class="feature">
+        <h3>One-click Sharing</h3>
+        <p>Share a link like moqpush.com/your-stream and anyone can watch instantly in their browser.</p>
+      </div>
+      <div class="feature">
+        <h3>Cloudflare Powered</h3>
+        <p>Worker + Durable Objects handle auth, orchestration, and stats. Scales automatically.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>MoQpush &mdash; MoQ Transport draft-14 &middot; MSF draft-00 &middot; CMSF draft-00</p>
+    <p style="margin-top:6px"><a href="/admin">Admin</a> &middot; <a href="/admin/stats">Stats</a></p>
+  </div>
+</body>
+</html>

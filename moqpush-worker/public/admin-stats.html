@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>moqpush stats</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #e5e5e5; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid #1a1a1a; }
+    .header h1 { font-size: 1.2em; font-weight: 500; }
+    .header a { color: #737373; text-decoration: none; font-size: 0.9em; }
+    .header a:hover { color: #e5e5e5; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+    .status-dot.on { background: #4ade80; }
+    .status-dot.off { background: #ef4444; }
+    .content { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .empty { text-align: center; color: #525252; padding: 60px 0; }
+
+    .ns-card { border: 1px solid #1a1a1a; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+    .ns-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; background: #111; }
+    .ns-header:hover { background: #171717; }
+    .ns-name { font-family: monospace; font-weight: 600; font-size: 1em; }
+    .ns-badges { display: flex; gap: 8px; }
+    .badge { font-size: 0.7em; padding: 2px 8px; border-radius: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .badge.on { background: #166534; color: #4ade80; }
+    .badge.off { background: #1c1917; color: #525252; }
+    .chevron { color: #525252; transition: transform 0.2s; font-size: 0.9em; }
+    .chevron.open { transform: rotate(90deg); }
+
+    .ns-body { display: none; padding: 16px; border-top: 1px solid #1a1a1a; }
+    .ns-body.open { display: block; }
+
+    .role-section { margin-bottom: 16px; }
+    .role-label { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.1em; color: #737373; margin-bottom: 8px; font-weight: 600; }
+
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .stat { background: #171717; border-radius: 6px; padding: 8px 10px; }
+    .stat-label { font-size: 0.65em; text-transform: uppercase; letter-spacing: 0.05em; color: #737373; margin-bottom: 2px; }
+    .stat-value { font-family: monospace; font-size: 0.95em; }
+    .stat-value.warn { color: #fbbf24; }
+    .stat-value.err { color: #f87171; }
+    .stat-value.good { color: #4ade80; }
+
+    .updated { font-size: 0.7em; color: #525252; margin-top: 6px; text-align: right; }
+    .warm-section { margin-top: 12px; }
+    .warm-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+    .warm-chip { font-size: 0.7em; padding: 3px 8px; border-radius: 4px; font-weight: 600; }
+    .warm-chip.warm { background: #1e3a5f; color: #60a5fa; }
+    .warm-chip.pending { background: #3b2f1a; color: #fbbf24; }
+    .warm-chip.cold { background: #1c1917; color: #525252; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>
+        <span class="status-dot off" id="ws-dot"></span>
+        moqpush stats
+      </h1>
+    </div>
+    <div>
+      <a href="/admin">Admin</a>
+    </div>
+  </div>
+
+  <div class="content" id="content">
+    <div class="empty" id="empty">No active streams</div>
+  </div>
+
+  <script>
+    let ws = null;
+    let pullerWs = null;
+    let data = {};
+    let pullerStatus = {};
+
+    function fmtBytes(b) {
+      if (b == null) return '-';
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+      if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+      return (b / 1073741824).toFixed(2) + ' GB';
+    }
+
+    function fmtUptime(s) {
+      if (s == null) return '-';
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = Math.floor(s % 60);
+      return `${h}h ${m}m ${sec}s`;
+    }
+
+    function stat(label, value, cls) {
+      return `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value ${cls || ''}">${value ?? '-'}</div></div>`;
+    }
+
+    function renderRole(label, d) {
+      if (!d) return '';
+      let html = `<div class="role-section"><div class="role-label">${label}</div><div class="stat-grid">`;
+
+      html += stat('Uptime', fmtUptime(d.uptime_secs));
+
+      // Publisher stats
+      if (d.tracks_published != null) html += stat('Tracks', d.tracks_published);
+      if (d.bytes_published != null) html += stat('Published', fmtBytes(d.bytes_published));
+
+      // Player stats
+      if (d.buffer_health != null) html += stat('Buffer', d.buffer_health.toFixed(2) + 's');
+      if (d.latency != null) html += stat('Latency', d.latency.toFixed(2) + 's');
+      if (d.width != null && d.height != null) html += stat('Resolution', d.width + 'x' + d.height);
+      if (d.bitrate_mbps != null) html += stat('Bitrate', d.bitrate_mbps.toFixed(1) + ' Mbps');
+      if (d.video_codec != null) html += stat('Video Codec', d.video_codec);
+      if (d.audio_codec != null) html += stat('Audio Codec', d.audio_codec);
+      if (d.dropped_frames != null) html += stat('Dropped', d.dropped_frames, d.dropped_frames > 0 ? 'warn' : '');
+      if (d.relay != null) html += stat('Relay', d.relay);
+
+      html += '</div>';
+      if (d.updated_at) {
+        const ago = ((Date.now() - d.updated_at) / 1000).toFixed(0);
+        html += `<div class="updated">Updated ${ago}s ago</div>`;
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function render(msg) {
+      data = msg.namespaces || {};
+      const content = document.getElementById('content');
+      const empty = document.getElementById('empty');
+      const namespaces = Object.keys(data).sort();
+
+      if (namespaces.length === 0) {
+        empty.style.display = '';
+        content.querySelectorAll('.ns-card').forEach(el => el.remove());
+        return;
+      }
+      empty.style.display = 'none';
+
+      const existing = new Set();
+      content.querySelectorAll('.ns-card').forEach(el => existing.add(el.dataset.ns));
+
+      for (const ns of namespaces) {
+        const entry = data[ns];
+        let card = content.querySelector(`.ns-card[data-ns="${ns}"]`);
+
+        if (!card) {
+          card = document.createElement('div');
+          card.className = 'ns-card';
+          card.dataset.ns = ns;
+          card.innerHTML = `
+            <div class="ns-header" onclick="toggle('${ns}')">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span class="chevron" id="chev-${ns}">&#9654;</span>
+                <span class="ns-name">${ns}</span>
+              </div>
+              <div class="ns-badges" id="badges-${ns}"></div>
+            </div>
+            <div class="ns-body" id="body-${ns}"></div>
+          `;
+          content.appendChild(card);
+        }
+
+        // Count warm nodes for this namespace
+        const warmNodes = Object.values(pullerStatus).filter(p =>
+          p.warm_namespaces?.includes(ns)
+        );
+        const activeNodes = Object.values(pullerStatus).filter(p =>
+          p.active_namespaces?.includes(ns)
+        );
+
+        const badges = card.querySelector(`#badges-${ns}`);
+        badges.innerHTML = `
+          <span class="badge ${entry.publisher ? 'on' : 'off'}">PUB ${entry.publisher ? 'ON' : 'OFF'}</span>
+          <span class="badge ${entry.player ? 'on' : 'off'}">PLAY ${entry.player ? 'ON' : 'OFF'}</span>
+          ${activeNodes.length > 0 ? `<span class="badge ${warmNodes.length === activeNodes.length ? 'on' : 'off'}">${warmNodes.length}/${activeNodes.length} WARM</span>` : ''}
+        `;
+
+        const body = card.querySelector(`#body-${ns}`);
+        if (body.classList.contains('open')) {
+          body.innerHTML =
+            renderRole('Publisher', entry.publisher) +
+            renderRole('Player', entry.player) +
+            renderWarmStatus(ns);
+        }
+      }
+
+      content.querySelectorAll('.ns-card').forEach(el => {
+        if (!data[el.dataset.ns]) el.remove();
+      });
+    }
+
+    function toggle(ns) {
+      const body = document.getElementById('body-' + ns);
+      const chev = document.getElementById('chev-' + ns);
+      const isOpen = body.classList.toggle('open');
+      chev.classList.toggle('open', isOpen);
+
+      if (isOpen && data[ns]) {
+        body.innerHTML =
+          renderRole('Publisher', data[ns].publisher) +
+          renderRole('Player', data[ns].player) +
+          renderWarmStatus(ns);
+      }
+    }
+
+    function renderWarmStatus(ns) {
+      const nodes = Object.entries(pullerStatus);
+      const relevant = nodes.filter(([_, p]) =>
+        p.active_namespaces?.includes(ns) || p.warm_namespaces?.includes(ns)
+      );
+      if (relevant.length === 0) return '';
+      let html = '<div class="warm-section"><div class="role-label">Edge Warm Status</div><div class="warm-grid">';
+      for (const [node, p] of relevant) {
+        const warm = p.warm_namespaces?.includes(ns);
+        html += `<span class="warm-chip ${warm ? 'warm' : 'pending'}">${node} (${p.region || '?'}) ${warm ? 'WARM' : '...'}</span>`;
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    function connectPullerWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      pullerWs = new WebSocket(proto + '//' + location.host + '/api/pullers/status/ws');
+      pullerWs.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'status') {
+          pullerStatus = msg.pullers || {};
+          // Re-render open cards
+          if (Object.keys(data).length > 0) {
+            render({ namespaces: data });
+          }
+        }
+      };
+      pullerWs.onclose = () => setTimeout(connectPullerWs, 3000);
+      pullerWs.onerror = () => pullerWs.close();
+    }
+
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(proto + '//' + location.host + '/api/stats/ws');
+
+      ws.onopen = () => {
+        document.getElementById('ws-dot').className = 'status-dot on';
+      };
+      ws.onmessage = (e) => {
+        render(JSON.parse(e.data));
+      };
+      ws.onclose = () => {
+        document.getElementById('ws-dot').className = 'status-dot off';
+        setTimeout(connect, 2000);
+      };
+      ws.onerror = () => { ws.close(); };
+    }
+
+    fetch('/api/auth/me').then(r => r.json()).then(d => {
+      if (!d.authenticated) {
+        document.getElementById('content').innerHTML =
+          '<div class="empty">Not authenticated. <a href="/admin" style="color:#667eea">Sign in</a></div>';
+        return;
+      }
+      connect();
+      connectPullerWs();
+    });
+  </script>
+</body>
+</html>

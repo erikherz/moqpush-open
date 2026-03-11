@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>moqpush admin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #e5e5e5; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid #1a1a1a; }
+    .header h1 { font-size: 1.2em; font-weight: 500; }
+    .header .nav { display: flex; align-items: center; gap: 16px; }
+    .header .nav a { color: #737373; text-decoration: none; font-size: 0.9em; }
+    .header .nav a:hover { color: #e5e5e5; }
+    .header .user { display: flex; align-items: center; gap: 10px; }
+    .header .user img { width: 32px; height: 32px; border-radius: 50%; }
+    .header .user a { color: #888; text-decoration: none; font-size: 0.9em; }
+    .login-prompt { text-align: center; padding: 80px 20px; }
+    .login-prompt h2 { margin-bottom: 20px; }
+    .login-prompt .btn { display: inline-block; padding: 12px 24px; margin: 8px; border-radius: 8px; text-decoration: none; font-weight: 500; }
+    .btn-google { background: #4285f4; color: #fff; }
+    .btn-discord { background: #5865f2; color: #fff; }
+    .content { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .section { margin-bottom: 32px; }
+    .section h2 { margin-bottom: 16px; font-size: 1.2em; border-bottom: 1px solid #222; padding-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #1a1a1a; }
+    th { color: #737373; font-weight: 500; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; }
+    .key { font-family: monospace; font-size: 0.85em; color: #a3a3a3; cursor: pointer; user-select: none; }
+    .key:hover { color: #e5e5e5; }
+    .key.hidden span { filter: blur(4px); }
+    tr:hover td { background: #111; }
+    .actions { display: flex; gap: 8px; }
+    button, .btn { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.85em; font-weight: 500; }
+    .btn-primary { background: #667eea; color: #fff; }
+    .btn-primary:hover { background: #5a6fd6; }
+    .btn-danger { background: #333; color: #e74c3c; }
+    .btn-danger:hover { background: #3a2020; }
+    .btn-small { padding: 4px 10px; font-size: 0.8em; }
+    input[type="text"], input[type="email"] { background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 8px 12px; border-radius: 6px; font-size: 0.9em; }
+    .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .form-row input { flex: 1; }
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #1a1a1a; color: #e0e0e0; padding: 12px 20px; border-radius: 8px; border: 1px solid #333; display: none; z-index: 100; }
+    .live-badge { display: inline-block; background: #2ecc71; color: #000; font-size: 0.7em; padding: 2px 6px; border-radius: 4px; font-weight: 600; margin-left: 8px; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+    .tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; background: #111; color: #888; border: 1px solid #222; border-bottom: none; }
+    .tab.active { background: #1a1a1a; color: #fff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .region-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .region-chip { display: inline-block; background: #1a2a1a; color: #4ade80; font-size: 0.75em; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+    .region-chip.offline { background: #2a1a1a; color: #888; }
+    .multiselect { display: flex; flex-wrap: wrap; gap: 6px; }
+    .multiselect label { display: flex; align-items: center; gap: 4px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 0.85em; }
+    .multiselect label:hover { border-color: #555; }
+    .multiselect input:checked + span { color: #4ade80; }
+    .puller-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    .puller-status.online { background: #4ade80; }
+    .puller-status.offline { background: #ef4444; }
+    .warm-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+    .warm-badge { font-size: 0.65em; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+    .warm-badge.warm { background: #1e3a5f; color: #60a5fa; }
+    .warm-badge.pending { background: #3b2f1a; color: #fbbf24; }
+    .warm-badge.cold { background: #1c1917; color: #525252; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>moqpush admin</h1>
+    <div class="nav">
+      <a href="/super-admin">Super Admin</a>
+      <a href="/admin/stats">Stats</a>
+      <div class="user" id="user-info"></div>
+    </div>
+  </div>
+
+  <div id="login-prompt" class="login-prompt" style="display:none;">
+    <h2>Sign in to manage streams</h2>
+    <a href="/api/auth/google/login" class="btn btn-google">Sign in with Google</a>
+    <a href="/api/auth/discord/login" class="btn btn-discord">Sign in with Discord</a>
+  </div>
+
+  <div id="app" class="content" style="display:none;">
+    <div class="tabs">
+      <div class="tab active" data-tab="namespaces">Namespaces</div>
+      <div class="tab" data-tab="pullers">Pullers</div>
+      <div class="tab" data-tab="users">Admins</div>
+    </div>
+
+    <div id="tab-namespaces" class="tab-content active">
+      <div class="section">
+        <h2>Create Namespace</h2>
+        <div class="form-row">
+          <input type="text" id="new-namespace" placeholder="namespace (e.g. erik01)">
+          <button class="btn-primary" onclick="createNamespace()">Create</button>
+        </div>
+        <div id="region-selector" style="margin-top:8px;">
+          <label style="font-size:0.8em;color:#888;">Pre-position regions:</label>
+          <div class="multiselect" id="region-checkboxes"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Namespaces</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Namespace</th>
+              <th>Push Key</th>
+              <th>Pre-position</th>
+              <th>Warm Status</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="namespaces-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-pullers" class="tab-content">
+      <div class="section">
+        <h2>Puller Servers</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Node</th>
+              <th>URL</th>
+              <th>Region</th>
+              <th>Active Pulls</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="pullers-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-users" class="tab-content">
+      <div class="section">
+        <h2>Add Admin</h2>
+        <div class="form-row">
+          <input type="email" id="new-admin-email" placeholder="email@example.com">
+          <button class="btn-primary" onclick="addAdmin()">Add</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Authorized Admins</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Name</th>
+              <th>Provider</th>
+              <th>Last Login</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="users-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let currentUser = null;
+    let liveBroadcasts = {};
+    let pullerNodes = [];
+    let pullerLiveStatus = {}; // from PullerHub WebSocket
+
+    // Tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.display = 'block';
+      setTimeout(() => t.style.display = 'none', 3000);
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text);
+      toast('Copied to clipboard');
+    }
+
+    async function init() {
+      const resp = await fetch('/api/auth/me');
+      const data = await resp.json();
+
+      if (!data.authenticated) {
+        document.getElementById('login-prompt').style.display = '';
+        return;
+      }
+
+      currentUser = data.user;
+      document.getElementById('app').style.display = '';
+      document.getElementById('user-info').innerHTML = `
+        ${data.user.avatar_url ? `<img src="${data.user.avatar_url}" alt="">` : ''}
+        <span>${data.user.name || data.user.email}</span>
+        <a href="/api/auth/logout">Logout</a>
+      `;
+
+      await loadPullers();
+      loadNamespaces();
+      loadUsers();
+      loadLive();
+      setInterval(loadLive, 10000);
+      connectPullerStatusWs();
+    }
+
+    function connectPullerStatusWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(proto + '//' + location.host + '/api/pullers/status/ws');
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'status') {
+          pullerLiveStatus = msg.pullers || {};
+          updateWarmBadges();
+        }
+      };
+      ws.onclose = () => setTimeout(connectPullerStatusWs, 3000);
+      ws.onerror = () => ws.close();
+    }
+
+    function updateWarmBadges() {
+      document.querySelectorAll('.warm-badges').forEach(el => {
+        const ns = el.dataset.ns;
+        const regions = JSON.parse(el.dataset.regions || '[]');
+        el.innerHTML = regions.map(node => {
+          const p = pullerLiveStatus[node];
+          if (!p) return `<span class="warm-badge cold">${node}</span>`;
+          if (p.warm_namespaces?.includes(ns)) return `<span class="warm-badge warm">${node} WARM</span>`;
+          if (p.active_namespaces?.includes(ns)) return `<span class="warm-badge pending">${node} ...</span>`;
+          return `<span class="warm-badge cold">${node}</span>`;
+        }).join('');
+      });
+    }
+
+    async function loadLive() {
+      try {
+        const resp = await fetch('/api/broadcasts');
+        const data = await resp.json();
+        liveBroadcasts = {};
+        (data.broadcasts || []).forEach(b => { liveBroadcasts[b.namespace] = b; });
+        updateLiveBadges();
+      } catch (e) {}
+    }
+
+    function updateLiveBadges() {
+      document.querySelectorAll('[data-ns]').forEach(el => {
+        const badge = el.querySelector('.live-badge');
+        if (liveBroadcasts[el.dataset.ns]) {
+          if (!badge) {
+            const b = document.createElement('span');
+            b.className = 'live-badge';
+            b.textContent = 'LIVE';
+            el.appendChild(b);
+          }
+        } else if (badge) {
+          badge.remove();
+        }
+      });
+    }
+
+    async function loadPullers() {
+      const resp = await fetch('/api/admin/pullers');
+      const data = await resp.json();
+      pullerNodes = data.pullers || [];
+
+      // Populate region checkboxes
+      const container = document.getElementById('region-checkboxes');
+      container.innerHTML = pullerNodes.map(p => `
+        <label>
+          <input type="checkbox" name="region" value="${p.node}">
+          <span class="puller-status ${p.online ? 'online' : 'offline'}"></span>
+          <span>${p.node} (${p.region})</span>
+        </label>
+      `).join('');
+
+      // Populate pullers table
+      const tbody = document.getElementById('pullers-table');
+      tbody.innerHTML = pullerNodes.map(p => `
+        <tr>
+          <td><span class="puller-status ${p.online ? 'online' : 'offline'}"></span>${p.node}</td>
+          <td style="font-size:0.85em">${p.url}</td>
+          <td>${p.region}</td>
+          <td>${(p.active_namespaces || []).map(ns => `<span class="region-chip">${ns}</span>`).join(' ') || '-'}</td>
+          <td>${p.online ? '<span style="color:#4ade80">Online</span>' : '<span style="color:#ef4444">Offline</span>'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadNamespaces() {
+      const resp = await fetch('/api/admin/namespaces');
+      const data = await resp.json();
+      const tbody = document.getElementById('namespaces-table');
+      tbody.innerHTML = (data.namespaces || []).map(b => `
+        <tr>
+          <td data-ns="${b.namespace}">
+            <a href="/${b.namespace}" style="color:#667eea;text-decoration:none">${b.namespace}</a>
+          </td>
+          <td>
+            <span class="key hidden" onclick="this.classList.toggle('hidden');copyToClipboard('${b.push_key}')">
+              <span>${b.push_key}</span>
+            </span>
+          </td>
+          <td>
+            <div class="region-chips" onclick="editRegions('${b.namespace}', ${JSON.stringify(b.regions).replace(/"/g, '&quot;')})">
+              ${(b.regions || []).length > 0
+                ? b.regions.map(r => `<span class="region-chip">${r}</span>`).join('')
+                : '<span style="color:#888;font-size:0.8em;cursor:pointer">click to set</span>'}
+            </div>
+          </td>
+          <td>
+            <div class="warm-badges" data-ns="${b.namespace}" data-regions='${JSON.stringify(b.regions || [])}'></div>
+          </td>
+          <td data-ns="${b.namespace}"></td>
+          <td>
+            <button class="btn-danger btn-small" onclick="deleteNamespace('${b.namespace}')">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+      updateLiveBadges();
+      updateWarmBadges();
+    }
+
+    async function createNamespace() {
+      const namespace = document.getElementById('new-namespace').value.trim();
+      if (!namespace) return;
+
+      const checks = document.querySelectorAll('#region-checkboxes input:checked');
+      const regions = Array.from(checks).map(c => c.value);
+
+      const resp = await fetch('/api/admin/namespaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ namespace, regions }),
+      });
+
+      if (resp.ok) {
+        toast(`Created ${namespace}`);
+        document.getElementById('new-namespace').value = '';
+        document.querySelectorAll('#region-checkboxes input').forEach(c => c.checked = false);
+        loadNamespaces();
+      } else {
+        const err = await resp.json();
+        toast(err.error || 'Failed to create');
+      }
+    }
+
+    async function editRegions(namespace, currentRegions) {
+      const allNodes = pullerNodes.map(p => p.node);
+      const selected = new Set(currentRegions || []);
+      const html = allNodes.map(n =>
+        `<label><input type="checkbox" ${selected.has(n) ? 'checked' : ''} value="${n}"> ${n}</label>`
+      ).join('\n');
+      const choice = prompt(
+        `Pre-position regions for "${namespace}" (comma-separated):\nAvailable: ${allNodes.join(', ')}\nCurrent: ${currentRegions.join(', ') || 'none'}`,
+        currentRegions.join(', ')
+      );
+      if (choice === null) return;
+      const regions = choice.split(',').map(s => s.trim()).filter(s => allNodes.includes(s));
+
+      const resp = await fetch(`/api/admin/namespaces/${namespace}/regions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ regions }),
+      });
+      if (resp.ok) {
+        toast(`Updated regions for ${namespace}`);
+        loadNamespaces();
+      }
+    }
+
+    async function deleteNamespace(namespace) {
+      if (!confirm(`Delete namespace "${namespace}"?`)) return;
+      await fetch(`/api/admin/namespaces/${namespace}`, { method: 'DELETE' });
+      toast(`Deleted ${namespace}`);
+      loadNamespaces();
+    }
+
+    async function loadUsers() {
+      const resp = await fetch('/api/admin/users');
+      const data = await resp.json();
+      const tbody = document.getElementById('users-table');
+      tbody.innerHTML = (data.users || []).map(u => `
+        <tr>
+          <td>${u.email}</td>
+          <td>${u.name || '-'}</td>
+          <td>${u.provider}</td>
+          <td>${u.last_login ? new Date(u.last_login * 1000).toLocaleDateString() : '-'}</td>
+          <td>
+            ${u.email !== currentUser?.email
+              ? `<button class="btn-danger btn-small" onclick="removeAdmin('${u.email}')">Remove</button>`
+              : '<span style="color:#666">you</span>'}
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function addAdmin() {
+      const email = document.getElementById('new-admin-email').value.trim();
+      if (!email) return;
+
+      const resp = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      if (resp.ok) {
+        toast(`Added ${email}`);
+        document.getElementById('new-admin-email').value = '';
+        loadUsers();
+      }
+    }
+
+    async function removeAdmin(email) {
+      if (!confirm(`Remove admin access for ${email}?`)) return;
+      await fetch(`/api/admin/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
+      toast(`Removed ${email}`);
+      loadUsers();
+    }
+
+    init();
+  </script>
+</body>
+</html>

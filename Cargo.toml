@@ -1,0 +1,54 @@
+[workspace]
+members = ["moqpush-app", "moqpush-puller"]
+resolver = "2"
+
+[workspace.dependencies]
+# MoQ transport + catalog
+moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
+hang = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
+moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
+moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
+moq-native = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
+
+# Ingest library (shared with moqcdn)
+moqcdn-ingest = { path = "../moqcdn/moqcdn-ingest" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# Byte buffers
+bytes = "1.5"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Random
+rand = "0.9"
+
+# URL + base64
+url = "2.5"
+base64 = "0.22.1"
+
+# WebSocket client
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"

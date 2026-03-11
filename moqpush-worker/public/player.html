@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>moqpush player</title>
+  <link rel="stylesheet" href="https://shaka-project.github.io/shaka-player/dist/controls.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+    .player-container { width: 100%; max-width: 1280px; position: relative; }
+    .shaka-video-container { width: 100%; background: #111; }
+    .shaka-video-container video { width: 100%; }
+    .overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10; }
+    .overlay.hidden { display: none; }
+    .status { text-align: center; }
+    .status h2 { margin-bottom: 8px; }
+    .status p { color: #888; font-size: 0.9em; }
+    .stats { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.88); padding: 14px 18px; border-radius: 4px; font-family: 'Roboto Mono', 'SF Mono', monospace; font-size: 12px; line-height: 2; display: none; z-index: 15; color: #fff; min-width: 380px; border: 1px solid rgba(255,255,255,0.1); pointer-events: none; }
+    .stats.visible { display: block; }
+    .stats-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.2); }
+    .stats-row { display: flex; justify-content: space-between; }
+    .stats-label { color: #aaa; }
+    .stats-val { color: #fff; }
+    .error { color: #e74c3c; }
+    .namespace-label { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 4px 10px; border-radius: 4px; font-size: 0.85em; z-index: 5; }
+    .console-toggle { width: 100%; background: #111; border: none; color: #666; font-size: 12px; padding: 6px 0; cursor: pointer; font-family: -apple-system, BlinkMacSystemFont, sans-serif; border-top: 1px solid #222; }
+    .console-toggle:hover { color: #aaa; background: #1a1a1a; }
+    .console-toggle .arrow { display: inline-block; transition: transform 0.2s; margin-right: 6px; }
+    .console-toggle.open .arrow { transform: rotate(180deg); }
+    .console-panel { background: #0d1117; border-top: 1px solid #222; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+    .console-panel.open { max-height: 500px; overflow-y: auto; }
+    .console-panel pre { margin: 0; padding: 12px 16px; font-family: 'Roboto Mono', 'SF Mono', monospace; font-size: 11px; line-height: 1.5; color: #e6edf3; white-space: pre-wrap; word-break: break-all; }
+    .console-panel .console-label { color: #7ee787; font-weight: 600; display: block; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div class="player-container">
+    <div class="namespace-label" id="ns-label"></div>
+    <div id="video-container" class="shaka-video-container">
+      <video id="video" autoplay muted playsinline controls></video>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="status">
+        <h2 id="status-title">Connecting...</h2>
+        <p id="status-detail">Looking up broadcast</p>
+      </div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+    <button class="console-toggle" id="console-toggle" onclick="toggleConsole()">
+      <span class="arrow">&#9660;</span> MSF Catalog
+    </button>
+    <div class="console-panel" id="console-panel">
+      <pre id="console-content"><span class="console-label">Waiting for catalog...</span></pre>
+    </div>
+  </div>
+
+  <script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
+  <script>
+    const namespace = window.location.pathname.replace(/^\//, '').replace(/\/$/, '');
+    document.getElementById('ns-label').textContent = namespace;
+    document.title = `${namespace} - moqpush`;
+
+    const video = document.getElementById('video');
+    const videoContainer = document.getElementById('video-container');
+    const overlay = document.getElementById('overlay');
+    const statusTitle = document.getElementById('status-title');
+    const statusDetail = document.getElementById('status-detail');
+    const statsEl = document.getElementById('stats');
+
+    // Toggle stats with 'I' key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'i' || e.key === 'I') {
+        statsEl.classList.toggle('visible');
+      }
+    });
+
+    let currentPlayer = null;
+    let relayUrl = null;
+    let statsInterval = null;
+    let bufferInterval = null;
+    let playerStatsInterval = null;
+    let startTime = Date.now();
+
+    async function loadPlayer() {
+      try {
+        statusTitle.textContent = 'Looking up broadcast...';
+        const dirResp = await fetch(`/api/broadcasts/${namespace}`);
+
+        if (!dirResp.ok) {
+          statusTitle.textContent = 'Broadcast not found';
+          statusDetail.textContent = 'This namespace is not currently live';
+          statusTitle.classList.add('error');
+          return;
+        }
+
+        const dirData = await dirResp.json();
+        relayUrl = dirData.relay_url;
+
+        if (typeof shaka === 'undefined') {
+          statusTitle.textContent = 'Player not loaded';
+          statusDetail.textContent = 'Shaka Player JS not found';
+          statusTitle.classList.add('error');
+          return;
+        }
+
+        shaka.polyfill.installAll();
+        if (!shaka.Player.isBrowserSupported()) {
+          statusTitle.textContent = 'Browser not supported';
+          statusDetail.textContent = 'WebTransport + MSE required';
+          statusTitle.classList.add('error');
+          return;
+        }
+
+        // Override relay from query param
+        const urlParams = new URLSearchParams(window.location.search);
+        const relayOverride = urlParams.get('relay');
+        if (relayOverride) {
+          relayUrl = relayOverride.startsWith('https://') ? relayOverride : `https://${relayOverride}`;
+        }
+
+        statusTitle.textContent = 'Loading stream...';
+        statusDetail.textContent = `${relayUrl} / ${namespace}`;
+
+        const player = new shaka.Player();
+        await player.attach(video);
+        currentPlayer = player;
+
+        player.configure({
+          streaming: {
+            lowLatencyMode: true,
+            bufferingGoal: 0.5,
+            rebufferingGoal: 0.2,
+            bufferBehind: 5,
+          },
+          manifest: {
+            msf: {
+              namespaces: [namespace],
+            },
+          },
+        });
+
+        player.addEventListener('error', (event) => {
+          console.error('Player error:', event.detail);
+          statusTitle.textContent = 'Playback error';
+          statusDetail.textContent = event.detail?.message || 'Unknown error';
+          statusTitle.classList.add('error');
+          overlay.classList.remove('hidden');
+        });
+
+        // Connect to Cloudflare relay — clean path (they already have the content)
+        const connectUrl = `${relayUrl.replace(/\/+$/, '')}/`;
+        await player.load(connectUrl, undefined, 'application/msf');
+        overlay.classList.add('hidden');
+        startTime = Date.now();
+
+        // MSE buffer diagnostics
+        bufferInterval = setInterval(() => {
+          const b = video.buffered;
+          const ranges = [];
+          for (let i = 0; i < b.length; i++) ranges.push(`${b.start(i).toFixed(2)}-${b.end(i).toFixed(2)}`);
+          console.log(`[MSE] t=${video.currentTime.toFixed(2)} ready=${video.readyState} ranges=[${ranges.join(',')}]`);
+        }, 2000);
+
+        // Push player stats to worker every 1s
+        playerStatsInterval = setInterval(() => {
+          const stats = player.getStats();
+          const buffered = video.buffered;
+          const bufferEnd = buffered.length > 0 ? buffered.end(buffered.length - 1) : 0;
+          const bufferHealth = bufferEnd - video.currentTime;
+          const tracks = player.getVariantTracks();
+          const activeVideo = tracks.find(t => t.active && t.videoCodec);
+          const activeAudio = tracks.find(t => t.active && t.audioCodec);
+
+          fetch('/api/player-stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              namespace,
+              buffer_health: parseFloat(bufferHealth.toFixed(2)),
+              latency: parseFloat((stats.liveLatency || 0).toFixed(2)),
+              width: stats.width || 0,
+              height: stats.height || 0,
+              bitrate_mbps: stats.streamBandwidth ? parseFloat((stats.streamBandwidth / 1e6).toFixed(2)) : 0,
+              dropped_frames: stats.droppedFrames || 0,
+              video_codec: activeVideo?.videoCodec || null,
+              audio_codec: activeAudio?.audioCodec || null,
+              relay: relayUrl.replace('https://', ''),
+              uptime_secs: Math.floor((Date.now() - startTime) / 1000),
+            }),
+          }).catch(() => {});
+        }, 1000);
+
+        // Stats overlay update loop
+        statsInterval = setInterval(() => {
+          if (document.getElementById('console-panel').classList.contains('open')) {
+            updateCatalog(player);
+          }
+          if (!statsEl.classList.contains('visible')) return;
+          const stats = player.getStats();
+          const buffered = video.buffered;
+          const bufferEnd = buffered.length > 0 ? buffered.end(buffered.length - 1) : 0;
+          const bufferHealth = (bufferEnd - video.currentTime).toFixed(2);
+          const uptime = ((Date.now() - startTime) / 1000).toFixed(0);
+          const tracks = player.getVariantTracks();
+          const activeVideo = tracks.find(t => t.active && t.videoCodec);
+          const activeAudio = tracks.find(t => t.active && t.audioCodec);
+
+          const row = (label, val) => `<div class="stats-row"><span class="stats-label">${label}</span><span class="stats-val">${val}</span></div>`;
+
+          statsEl.innerHTML = `
+            <div class="stats-title">Streaming Statistics</div>
+            ${row('Protocol', 'MoQ Transport draft-14 / WebTransport')}
+            ${row('Catalog', 'MSF draft-00 / CMSF draft-00')}
+            ${row('Relay', relayUrl.replace('https://', ''))}
+            ${row('Namespace', namespace)}
+            ${row('', '')}
+            ${row('Video', `${stats.width}x${stats.height}${stats.streamBandwidth ? ` @ ${(stats.streamBandwidth / 1e6).toFixed(1)} Mbps` : ''}`)}
+            ${row('Video Codec', activeVideo?.videoCodec || 'pending')}
+            ${row('Audio Codec', activeAudio?.audioCodec || 'pending')}
+            ${row('Dropped Frames', `${stats.droppedFrames}`)}
+            ${row('', '')}
+            ${row('Buffer Health', `${bufferHealth}s`)}
+            ${row('Latency', `${(stats.liveLatency || 0).toFixed(2)}s`)}
+            ${row('Session', `${uptime}s`)}
+            ${row('Player', `Shaka ${shaka.Player.version || 'unknown'}`)}
+          `;
+        }, 500);
+
+      } catch (err) {
+        console.error('Startup error:', err);
+        statusTitle.textContent = 'Connection failed';
+        statusDetail.textContent = err.message || String(err);
+        statusTitle.classList.add('error');
+      }
+    }
+
+    function toggleConsole() {
+      const btn = document.getElementById('console-toggle');
+      const panel = document.getElementById('console-panel');
+      btn.classList.toggle('open');
+      panel.classList.toggle('open');
+    }
+
+    function updateCatalog(player) {
+      const content = document.getElementById('console-content');
+      try {
+        const manifest = player.getManifest();
+        if (!manifest) { content.innerHTML = '<span class="console-label">No manifest available yet</span>'; return; }
+
+        const tracks = player.getVariantTracks();
+        const catalog = { version: 1, namespace, packaging: 'cmaf', tracks: [] };
+        const seenVideo = new Set();
+        const seenAudio = new Set();
+
+        for (const t of tracks) {
+          if (t.videoCodec && !seenVideo.has(t.videoId)) {
+            seenVideo.add(t.videoId);
+            const entry = { name: `video${seenVideo.size - 1}.m4s`, role: 'video', codec: t.videoCodec, width: t.width, height: t.height };
+            if (t.frameRate) entry.framerate = t.frameRate;
+            if (t.videoBandwidth) entry.bitrate = t.videoBandwidth;
+            if (t.active) entry.active = true;
+            catalog.tracks.push(entry);
+          }
+          if (t.audioCodec && !seenAudio.has(t.audioId)) {
+            seenAudio.add(t.audioId);
+            const entry = { name: `audio${seenAudio.size - 1}.m4s`, role: 'audio', codec: t.audioCodec };
+            if (t.channelsCount) entry.channels = t.channelsCount;
+            if (t.audioSamplingRate) entry.samplerate = t.audioSamplingRate;
+            catalog.tracks.push(entry);
+          }
+        }
+
+        const json = JSON.stringify(catalog, null, 2);
+        content.innerHTML = `<span class="console-label">MSF Catalog (${catalog.tracks.length} tracks)</span>${escapeHtml(json)}`;
+      } catch (e) {
+        content.innerHTML = `<span class="console-label">Error reading catalog</span>${escapeHtml(e.message)}`;
+      }
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    loadPlayer();
+  </script>
+</body>
+</html>
