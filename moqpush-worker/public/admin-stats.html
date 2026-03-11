@@ -116,7 +116,11 @@
       if (d.video_codec != null) html += stat('Video Codec', d.video_codec);
       if (d.audio_codec != null) html += stat('Audio Codec', d.audio_codec);
       if (d.dropped_frames != null) html += stat('Dropped', d.dropped_frames, d.dropped_frames > 0 ? 'warn' : '');
-      if (d.relay != null) html += stat('Relay', d.relay);
+      if (d.relay != null) {
+        const full = d.relay;
+        const short = full.length > 15 ? full.slice(0, 15) + '…' : full;
+        html += stat('Relay', `<span title="${full}">${short}</span>`);
+      }
 
       html += '</div>';
       if (d.updated_at) {
