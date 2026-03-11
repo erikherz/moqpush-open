@@ -233,6 +233,7 @@
         if (msg.type === 'status') {
           pullerLiveStatus = msg.pullers || {};
           updateWarmBadges();
+          updatePullerTable();
         }
       };
       ws.onclose = () => setTimeout(connectPullerStatusWs, 3000);
@@ -251,6 +252,46 @@
           return `<span class="warm-badge cold">${node}</span>`;
         }).join('');
       });
+    }
+
+    function updatePullerTable() {
+      const tbody = document.getElementById('pullers-table');
+      if (!tbody) return;
+      // Merge D1 data with live status
+      const allNodes = new Set([...pullerNodes.map(p => p.node), ...Object.keys(pullerLiveStatus)]);
+      tbody.innerHTML = [...allNodes].sort().map(node => {
+        const db = pullerNodes.find(p => p.node === node) || {};
+        const live = pullerLiveStatus[node];
+        const online = !!live;
+        const activeNs = live ? live.active_namespaces || [] : (db.active_namespaces || []);
+        return `
+          <tr>
+            <td><span class="puller-status ${online ? 'online' : 'offline'}"></span>${node}</td>
+            <td style="font-size:0.85em">${db.url || ''}</td>
+            <td>${live?.region || db.region || ''}</td>
+            <td>${activeNs.map(ns => `<span class="region-chip">${ns}</span>`).join(' ') || '-'}</td>
+            <td>${online ? '<span style="color:#4ade80">Online</span>' : '<span style="color:#ef4444">Offline</span>'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      // Also update region checkboxes
+      const container = document.getElementById('region-checkboxes');
+      if (container) {
+        container.innerHTML = [...allNodes].sort().map(node => {
+          const db = pullerNodes.find(p => p.node === node) || {};
+          const live = pullerLiveStatus[node];
+          const online = !!live;
+          const region = live?.region || db.region || '';
+          return `
+            <label>
+              <input type="checkbox" name="region" value="${node}">
+              <span class="puller-status ${online ? 'online' : 'offline'}"></span>
+              <span>${node} (${region})</span>
+            </label>
+          `;
+        }).join('');
+      }
     }
 
     async function loadLive() {

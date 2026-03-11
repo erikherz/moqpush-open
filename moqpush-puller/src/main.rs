@@ -92,17 +92,8 @@ async fn main() -> Result<()> {
             Err(e) => warn!("WebSocket session error: {}", e),
         }
 
-        // Stop all active pulls on disconnect
-        {
-            let mut pulls = active_pulls.write().await;
-            for (ns, session) in pulls.drain() {
-                info!("Stopping pull for '{}' (disconnected)", ns);
-                session.handle.abort();
-            }
-        }
-
-        info!("Reconnecting in 3s...");
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        info!("Reconnecting in 1s...");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
@@ -136,8 +127,20 @@ async fn run_ws_session(
 
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
-    while let Some(msg) = ws_read.next().await {
-        let msg = msg?;
+    let reconnect_timer = tokio::time::sleep(std::time::Duration::from_secs(60));
+    tokio::pin!(reconnect_timer);
+
+    loop {
+        let msg = tokio::select! {
+            _ = &mut reconnect_timer => {
+                info!("Recycling WebSocket connection");
+                break;
+            }
+            msg = ws_read.next() => match msg {
+                Some(msg) => msg?,
+                None => break,
+            }
+        };
         match msg {
             Message::Text(text) => {
                 let data: serde_json::Value = match serde_json::from_str(&text) {
