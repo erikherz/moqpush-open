@@ -79,6 +79,10 @@ impl Publisher {
         }
     }
 
+    pub fn set_target_latency_ms(&mut self, ms: u64) {
+        self.target_latency_ms = Some(ms);
+    }
+
     pub fn register_init(&mut self, handler_type: &str, init_data: &[u8]) -> Result<String> {
         let track_type = match handler_type {
             "vide" => TrackType::Video,

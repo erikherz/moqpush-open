@@ -34,6 +34,10 @@ struct Args {
     #[arg(long, default_value_t = 8888)]
     port: u16,
 
+    /// Target latency in milliseconds for the MSF catalog (default: 2000)
+    #[arg(long)]
+    target_latency: Option<u64>,
+
     /// Test mode: accept and print incoming data without connecting to worker or relay
     #[arg(long)]
     test: bool,
@@ -115,7 +119,10 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("failed to create broadcast for namespace '{}'", namespace))?;
     let catalog = CatalogProducer::new(&mut broadcast)
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
-    let publisher = Publisher::new(broadcast, catalog);
+    let mut publisher = Publisher::new(broadcast, catalog);
+    if let Some(latency) = args.target_latency {
+        publisher.set_target_latency_ms(latency);
+    }
 
     let first_init_notify = Arc::new(Notify::new());
 
