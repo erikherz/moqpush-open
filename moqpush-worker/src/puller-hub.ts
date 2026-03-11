@@ -80,6 +80,9 @@ export class PullerHub extends DurableObject {
     this.pullers.set(node, conn);
     this.broadcastAdminStatus();
 
+    // Start ping alarm if not already running
+    this.ctx.storage.setAlarm(Date.now() + 30_000);
+
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
