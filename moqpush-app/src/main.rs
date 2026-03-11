@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("failed to create broadcast for namespace '{}'", namespace))?;
     let catalog = CatalogProducer::new(&mut broadcast)
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
-    let publisher = Publisher::new(broadcast, catalog, namespace.clone());
+    let publisher = Publisher::new(broadcast, catalog);
 
     let first_init_notify = Arc::new(Notify::new());
 
