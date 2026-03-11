@@ -81,8 +81,8 @@
   <div class="content">
     <div class="section-title">Puller Secret</div>
     <div style="margin-bottom:20px;">
-      <span class="key hidden" id="puller-secret" onclick="this.classList.toggle('hidden')" style="font-family:monospace;font-size:0.85em;color:#888;cursor:pointer;background:#111;padding:6px 12px;border-radius:6px;border:1px solid #1a1a1a;display:inline-block">Loading...</span>
-      <span style="font-size:0.7em;color:#525252;margin-left:8px">Click to reveal. Use as --secret or MOQPUSH_PULLER_SECRET env var.</span>
+      <span class="key hidden" id="puller-secret" onclick="this.classList.toggle('hidden');if(!this.classList.contains('hidden')){navigator.clipboard.writeText(this.textContent.trim())}" style="font-family:monospace;font-size:0.85em;color:#888;cursor:pointer;background:#111;padding:6px 12px;border-radius:6px;border:1px solid #1a1a1a;display:inline-block">Loading...</span>
+      <span style="font-size:0.7em;color:#525252;margin-left:8px">Click to reveal and copy. Use as --secret or MOQPUSH_PULLER_SECRET env var.</span>
     </div>
 
     <div class="section-title">Puller Servers</div>

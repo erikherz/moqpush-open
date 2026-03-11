@@ -118,7 +118,13 @@ async fn run_ws_session(
         args.region,
     );
     if let Some(ref secret) = args.secret {
-        ws_url.push_str(&format!("&secret={}", secret));
+        let encoded: String = secret.bytes().map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        }).collect();
+        ws_url.push_str(&format!("&secret={}", encoded));
     }
 
     let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url).await?;
