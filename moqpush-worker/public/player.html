@@ -129,12 +129,17 @@
         await player.attach(video);
         currentPlayer = player;
 
+        const bufferingGoal = parseFloat(urlParams.get('bufferingGoal')) || 0.5;
+        const rebufferingGoal = parseFloat(urlParams.get('rebufferingGoal')) || 0.2;
+        const bufferBehind = parseFloat(urlParams.get('bufferBehind')) || 5;
+        const lowLatencyMode = urlParams.get('lowLatencyMode') !== 'false';
+
         player.configure({
           streaming: {
-            lowLatencyMode: true,
-            bufferingGoal: 0.5,
-            rebufferingGoal: 0.2,
-            bufferBehind: 5,
+            lowLatencyMode,
+            bufferingGoal,
+            rebufferingGoal,
+            bufferBehind,
           },
           manifest: {
             msf: {
