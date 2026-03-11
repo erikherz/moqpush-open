@@ -78,7 +78,23 @@
     </div>
   </div>
 
-  <div class="content">
+  <div id="password-gate" style="text-align:center;padding:80px 20px;">
+    <h2 style="margin-bottom:20px;">Super Admin Access</h2>
+    <div style="display:flex;gap:10px;justify-content:center;align-items:center;">
+      <input type="password" id="sa-password" placeholder="Password" style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:10px 14px;border-radius:6px;font-size:1em;" onkeydown="if(event.key==='Enter')checkPassword()">
+      <button onclick="checkPassword()" style="padding:10px 20px;border-radius:6px;border:none;cursor:pointer;background:#667eea;color:#fff;font-weight:500;">Enter</button>
+    </div>
+    <div id="pw-error" style="color:#ef4444;margin-top:12px;font-size:0.85em;display:none;">Wrong password</div>
+  </div>
+
+  <div class="content" id="sa-content" style="display:none;">
+    <div class="tabs" style="display:flex;gap:4px;margin-bottom:20px;">
+      <div class="sa-tab active" data-tab="overview" style="padding:8px 16px;border-radius:6px 6px 0 0;cursor:pointer;background:#1a1a1a;color:#fff;border:1px solid #222;border-bottom:none;">Overview</div>
+      <div class="sa-tab" data-tab="requests" style="padding:8px 16px;border-radius:6px 6px 0 0;cursor:pointer;background:#111;color:#888;border:1px solid #222;border-bottom:none;">Requests</div>
+      <div class="sa-tab" data-tab="admins" style="padding:8px 16px;border-radius:6px 6px 0 0;cursor:pointer;background:#111;color:#888;border:1px solid #222;border-bottom:none;">Admins</div>
+    </div>
+
+    <div id="sa-tab-overview" class="sa-tab-content">
     <div class="section-title">Puller Secret</div>
     <div style="margin-bottom:20px;">
       <span class="key hidden" id="puller-secret" onclick="this.classList.toggle('hidden');if(!this.classList.contains('hidden')){navigator.clipboard.writeText(this.textContent.trim())}" style="font-family:monospace;font-size:0.85em;color:#888;cursor:pointer;background:#111;padding:6px 12px;border-radius:6px;border:1px solid #1a1a1a;display:inline-block">Loading...</span>
@@ -93,6 +109,42 @@
     <div class="section-title">All Namespaces</div>
     <div id="ns-list">
       <div class="empty">Loading...</div>
+    </div>
+    </div>
+
+    <div id="sa-tab-requests" class="sa-tab-content" style="display:none;">
+      <div class="section-title">Binary Requests</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Name</th>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Email</th>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Date</th>
+          </tr>
+        </thead>
+        <tbody id="requests-table"></tbody>
+      </table>
+    </div>
+
+    <div id="sa-tab-admins" class="sa-tab-content" style="display:none;">
+      <div class="section-title">Add Admin</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;">
+        <input type="email" id="new-admin-email" placeholder="email@example.com" style="background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:0.9em;flex:1;max-width:300px;">
+        <button onclick="addAdmin()" style="padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:0.85em;font-weight:500;background:#667eea;color:#fff;">Add</button>
+      </div>
+      <div class="section-title">Authorized Admins</div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Email</th>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Name</th>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Provider</th>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;color:#737373;font-weight:500;font-size:0.75em;text-transform:uppercase;letter-spacing:0.05em;">Last Login</th>
+            <th style="text-align:left;padding:10px 12px;border-bottom:1px solid #1a1a1a;"></th>
+          </tr>
+        </thead>
+        <tbody id="users-table"></tbody>
+      </table>
     </div>
   </div>
 
@@ -237,20 +289,104 @@
       } catch {}
     }
 
-    // Auth check + init
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (!d.authenticated) {
-        document.querySelector('.content').innerHTML =
-          '<div class="empty">Not authenticated. <a href="/admin" style="color:#667eea">Sign in</a></div>';
-        return;
+    const SA_PASS = 'vivoh2026';
+
+    function checkPassword() {
+      const pw = document.getElementById('sa-password').value;
+      if (pw === SA_PASS) {
+        document.getElementById('password-gate').style.display = 'none';
+        document.getElementById('sa-content').style.display = '';
+        sessionStorage.setItem('sa-auth', '1');
+        initSuperAdmin();
+      } else {
+        document.getElementById('pw-error').style.display = '';
       }
-      loadNamespaces();
-      loadBroadcasts();
-      loadPullerSecret();
-      connectPullerWs();
-      // Refresh broadcasts every 10s
-      setInterval(loadBroadcasts, 10000);
+    }
+
+    // Tab switching
+    document.querySelectorAll('.sa-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.sa-tab').forEach(t => { t.classList.remove('active'); t.style.background = '#111'; t.style.color = '#888'; });
+        document.querySelectorAll('.sa-tab-content').forEach(c => c.style.display = 'none');
+        tab.classList.add('active'); tab.style.background = '#1a1a1a'; tab.style.color = '#fff';
+        document.getElementById('sa-tab-' + tab.dataset.tab).style.display = '';
+      });
     });
+
+    async function loadRequests() {
+      const resp = await fetch('/api/admin/requests');
+      const data = await resp.json();
+      const tbody = document.getElementById('requests-table');
+      const rows = (data.requests || []);
+      tbody.innerHTML = rows.length > 0 ? rows.map(r => `
+        <tr style="border-bottom:1px solid #1a1a1a;">
+          <td style="padding:10px 12px;">${r.name}</td>
+          <td style="padding:10px 12px;">${r.email}</td>
+          <td style="padding:10px 12px;">${r.created_at ? new Date(r.created_at * 1000).toLocaleDateString() : '-'}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="3" style="padding:10px 12px;color:#888">No requests yet</td></tr>';
+    }
+
+    async function loadUsers() {
+      const resp = await fetch('/api/admin/users');
+      const data = await resp.json();
+      const tbody = document.getElementById('users-table');
+      tbody.innerHTML = (data.users || []).map(u => `
+        <tr style="border-bottom:1px solid #1a1a1a;">
+          <td style="padding:10px 12px;">${u.email}</td>
+          <td style="padding:10px 12px;">${u.name || '-'}</td>
+          <td style="padding:10px 12px;">${u.provider}</td>
+          <td style="padding:10px 12px;">${u.last_login ? new Date(u.last_login * 1000).toLocaleDateString() : '-'}</td>
+          <td style="padding:10px 12px;">
+            <button onclick="removeAdmin('${u.email}')" style="padding:4px 10px;font-size:0.8em;border-radius:6px;border:none;cursor:pointer;background:#333;color:#e74c3c;">Remove</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function addAdmin() {
+      const email = document.getElementById('new-admin-email').value.trim();
+      if (!email) return;
+      const resp = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (resp.ok) {
+        document.getElementById('new-admin-email').value = '';
+        loadUsers();
+      }
+    }
+
+    async function removeAdmin(email) {
+      if (!confirm(`Remove admin access for ${email}?`)) return;
+      await fetch(`/api/admin/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
+      loadUsers();
+    }
+
+    function initSuperAdmin() {
+      fetch('/api/auth/me').then(r => r.json()).then(d => {
+        if (!d.authenticated) {
+          document.getElementById('sa-content').innerHTML =
+            '<div class="empty">Not authenticated. <a href="/admin" style="color:#667eea">Sign in</a></div>';
+          return;
+        }
+        loadNamespaces();
+        loadBroadcasts();
+        loadPullerSecret();
+        loadRequests();
+        loadUsers();
+        connectPullerWs();
+        setInterval(loadBroadcasts, 10000);
+      });
+    }
+
+    // Auto-login if already authenticated this session
+    if (sessionStorage.getItem('sa-auth') === '1') {
+      document.getElementById('password-gate').style.display = 'none';
+      document.getElementById('sa-content').style.display = '';
+      initSuperAdmin();
+    }
   </script>
 </body>
 </html>

@@ -90,8 +90,6 @@
     <div class="tabs">
       <div class="tab active" data-tab="namespaces">Namespaces</div>
       <div class="tab" data-tab="pullers">Pullers</div>
-      <div class="tab" data-tab="requests">Requests</div>
-      <div class="tab" data-tab="users">Admins</div>
     </div>
 
     <div id="tab-namespaces" class="tab-content active">
@@ -144,47 +142,6 @@
       </div>
     </div>
 
-    <div id="tab-requests" class="tab-content">
-      <div class="section">
-        <h2>Binary Requests</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody id="requests-table"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div id="tab-users" class="tab-content">
-      <div class="section">
-        <h2>Add Admin</h2>
-        <div class="form-row">
-          <input type="email" id="new-admin-email" placeholder="email@example.com">
-          <button class="btn-primary" onclick="addAdmin()">Add</button>
-        </div>
-      </div>
-
-      <div class="section">
-        <h2>Authorized Admins</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Email</th>
-              <th>Name</th>
-              <th>Provider</th>
-              <th>Last Login</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="users-table"></tbody>
-        </table>
-      </div>
-    </div>
   </div>
 
   <div id="toast" class="toast"></div>
@@ -236,8 +193,6 @@
 
       await loadPullers();
       loadNamespaces();
-      loadUsers();
-      loadRequests();
       loadLive();
       setInterval(loadLive, 10000);
       connectPullerStatusWs();
@@ -474,61 +429,7 @@
       loadNamespaces();
     }
 
-    async function loadUsers() {
-      const resp = await fetch('/api/admin/users');
-      const data = await resp.json();
-      const tbody = document.getElementById('users-table');
-      tbody.innerHTML = (data.users || []).map(u => `
-        <tr>
-          <td>${u.email}</td>
-          <td>${u.name || '-'}</td>
-          <td>${u.provider}</td>
-          <td>${u.last_login ? new Date(u.last_login * 1000).toLocaleDateString() : '-'}</td>
-          <td>
-            ${u.email !== currentUser?.email
-              ? `<button class="btn-danger btn-small" onclick="removeAdmin('${u.email}')">Remove</button>`
-              : '<span style="color:#666">you</span>'}
-          </td>
-        </tr>
-      `).join('');
-    }
 
-    async function addAdmin() {
-      const email = document.getElementById('new-admin-email').value.trim();
-      if (!email) return;
-
-      const resp = await fetch('/api/admin/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-
-      if (resp.ok) {
-        toast(`Added ${email}`);
-        document.getElementById('new-admin-email').value = '';
-        loadUsers();
-      }
-    }
-
-    async function removeAdmin(email) {
-      if (!confirm(`Remove admin access for ${email}?`)) return;
-      await fetch(`/api/admin/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
-      toast(`Removed ${email}`);
-      loadUsers();
-    }
-
-    async function loadRequests() {
-      const resp = await fetch('/api/admin/requests');
-      const data = await resp.json();
-      const tbody = document.getElementById('requests-table');
-      tbody.innerHTML = (data.requests || []).map(r => `
-        <tr>
-          <td>${r.name}</td>
-          <td>${r.email}</td>
-          <td>${r.created_at ? new Date(r.created_at * 1000).toLocaleDateString() : '-'}</td>
-        </tr>
-      `).join('') || '<tr><td colspan="3" style="color:#888">No requests yet</td></tr>';
-    }
 
     init();
   </script>
