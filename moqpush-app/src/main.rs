@@ -43,9 +43,6 @@ struct Args {
     #[arg(long)]
     no_auth: bool,
 
-    /// Target latency in milliseconds for MSF catalog (default: 2000)
-    #[arg(long)]
-    target_latency: Option<u64>,
 }
 
 #[tokio::main]
@@ -129,8 +126,7 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("failed to create broadcast for namespace '{}'", namespace))?;
     let catalog = CatalogProducer::new(&mut broadcast)
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
-    let publisher = Publisher::new(broadcast, catalog, namespace.clone())
-        .with_target_latency(args.target_latency);
+    let publisher = Publisher::new(broadcast, catalog, namespace.clone());
 
     let first_init_notify = Arc::new(Notify::new());
 
