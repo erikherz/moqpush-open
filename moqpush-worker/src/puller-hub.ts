@@ -3,6 +3,7 @@
 // in real-time. Puller servers report warm status back over the same connection.
 
 import { DurableObject } from "cloudflare:workers";
+import type { Env } from "./index";
 
 interface PullerConnection {
   node: string;
@@ -14,7 +15,7 @@ interface PullerConnection {
   lastPing: number;
 }
 
-export class PullerHub extends DurableObject {
+export class PullerHub extends DurableObject<Env> {
   private pullers: Map<string, PullerConnection> = new Map();
   // Admin WebSocket clients watching puller status
   private adminClients: Set<WebSocket> = new Set();
@@ -230,8 +231,9 @@ export class PullerHub extends DurableObject {
   }
 
   async alarm() {
-    // Ping connected pullers
     const now = Date.now();
+
+    // Ping connected pullers and evict stale ones
     for (const [node, conn] of this.pullers) {
       if (now - conn.lastPing > 60_000) {
         try { conn.ws.close(1000, "timeout"); } catch {}
@@ -240,8 +242,18 @@ export class PullerHub extends DurableObject {
         try { conn.ws.send(JSON.stringify({ type: "ping" })); } catch {}
       }
     }
+
+    // Sync heartbeats to D1 for all connected pullers
+    for (const [node, conn] of this.pullers) {
+      try {
+        await this.env.DB.prepare(
+          `UPDATE pullers SET heartbeat_at = unixepoch(), active_namespaces = ? WHERE node = ?`
+        ).bind(JSON.stringify([...conn.activeNamespaces]), node).run();
+      } catch {}
+    }
+
     if (this.pullers.size > 0) {
-      this.ctx.storage.setAlarm(Date.now() + 30_000);
+      this.ctx.storage.setAlarm(now + 30_000);
     }
   }
 }
