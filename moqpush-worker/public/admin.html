@@ -90,6 +90,7 @@
     <div class="tabs">
       <div class="tab active" data-tab="namespaces">Namespaces</div>
       <div class="tab" data-tab="pullers">Pullers</div>
+      <div class="tab" data-tab="requests">Requests</div>
       <div class="tab" data-tab="users">Admins</div>
     </div>
 
@@ -139,6 +140,22 @@
             </tr>
           </thead>
           <tbody id="pullers-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-requests" class="tab-content">
+      <div class="section">
+        <h2>Binary Requests</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="requests-table"></tbody>
         </table>
       </div>
     </div>
@@ -220,6 +237,7 @@
       await loadPullers();
       loadNamespaces();
       loadUsers();
+      loadRequests();
       loadLive();
       setInterval(loadLive, 10000);
       connectPullerStatusWs();
@@ -497,6 +515,19 @@
       await fetch(`/api/admin/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
       toast(`Removed ${email}`);
       loadUsers();
+    }
+
+    async function loadRequests() {
+      const resp = await fetch('/api/admin/requests');
+      const data = await resp.json();
+      const tbody = document.getElementById('requests-table');
+      tbody.innerHTML = (data.requests || []).map(r => `
+        <tr>
+          <td>${r.name}</td>
+          <td>${r.email}</td>
+          <td>${r.created_at ? new Date(r.created_at * 1000).toLocaleDateString() : '-'}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="3" style="color:#888">No requests yet</td></tr>';
     }
 
     init();

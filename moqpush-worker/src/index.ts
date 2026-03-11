@@ -162,6 +162,9 @@ export default {
       const email = decodeURIComponent(path.split('/api/admin/users/')[1] || '');
       if (email) return handleAdminRemoveUser(email, request, env);
     }
+    if (path === '/api/admin/requests' && request.method === 'GET') {
+      return handleAdminListRequests(request, env);
+    }
     if (path === '/api/admin/pullers' && request.method === 'GET') {
       return handleAdminListPullers(request, env);
     }
@@ -662,6 +665,17 @@ async function handleAdminDeleteNamespace(namespace: string, request: Request, e
   await env.DB.prepare('DELETE FROM broadcast_directory WHERE namespace = ?').bind(namespace).run();
 
   return jsonResponse({ ok: true });
+}
+
+async function handleAdminListRequests(request: Request, env: Env): Promise<Response> {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const rows = await env.DB.prepare(
+    'SELECT name, email, created_at FROM binary_requests ORDER BY created_at DESC'
+  ).all();
+
+  return jsonResponse({ requests: rows.results || [] });
 }
 
 async function handleAdminListUsers(request: Request, env: Env): Promise<Response> {
