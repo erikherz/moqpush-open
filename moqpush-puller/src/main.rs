@@ -248,9 +248,9 @@ async fn run_pull_session(relay_url: &str, namespace: &str, tls_disable_verify: 
     let _broadcast = loop {
         match announcements.announced().await {
             Some((path, Some(bc))) => {
-                let ns = path.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("/");
-                if ns == namespace || path.first().map(|s| s.as_str()) == Some(namespace) {
-                    info!("Got broadcast for '{}'", ns);
+                let announced = path.as_str();
+                if announced == namespace || announced.starts_with(&format!("{}/", namespace)) {
+                    info!("Got broadcast for '{}'", announced);
                     break bc;
                 }
             }

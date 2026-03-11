@@ -9,7 +9,6 @@ use tracing::{error, info, warn};
 use moq_lite::Origin;
 use moq_mux::CatalogProducer;
 
-use moqcdn_ingest::heartbeat;
 use moqcdn_ingest::http_ingest;
 use moqcdn_ingest::publisher::Publisher;
 
