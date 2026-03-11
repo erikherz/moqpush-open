@@ -349,7 +349,9 @@
             <div class="warm-badges" data-ns="${b.namespace}" data-regions='${JSON.stringify(b.regions || [])}'></div>
           </td>
           <td data-ns="${b.namespace}"></td>
-          <td>
+          <td class="actions">
+            <button class="btn-primary btn-small" onclick="pullNamespace('${b.namespace}')" title="Send pull command to configured nodes">Pull</button>
+            <button class="btn-danger btn-small" onclick="stopPull('${b.namespace}')" title="Stop pulling on all nodes">Stop</button>
             <button class="btn-danger btn-small" onclick="deleteNamespace('${b.namespace}')">Delete</button>
           </td>
         </tr>
@@ -420,6 +422,26 @@
         toast(`Updated relay for ${namespace}`);
         loadNamespaces();
       }
+    }
+
+    async function pullNamespace(namespace) {
+      const resp = await fetch('/api/admin/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ namespace }),
+      });
+      if (resp.ok) toast(`Pull command sent for ${namespace}`);
+      else toast('Failed to send pull command');
+    }
+
+    async function stopPull(namespace) {
+      const resp = await fetch('/api/admin/stop-pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ namespace }),
+      });
+      if (resp.ok) toast(`Stop command sent for ${namespace}`);
+      else toast('Failed to send stop command');
     }
 
     async function deleteNamespace(namespace) {

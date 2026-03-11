@@ -168,6 +168,22 @@ export default {
     if (path === '/api/admin/pullers' && request.method === 'GET') {
       return handleAdminListPullers(request, env);
     }
+    if (path === '/api/admin/pull' && request.method === 'POST') {
+      const admin = await requireAdmin(request, env);
+      if (admin instanceof Response) return admin;
+      const body = await request.json<{ namespace: string }>();
+      if (!body.namespace) return jsonResponse({ error: 'missing namespace' }, 400);
+      await triggerAutoPulls(body.namespace, env);
+      return jsonResponse({ ok: true });
+    }
+    if (path === '/api/admin/stop-pull' && request.method === 'POST') {
+      const admin = await requireAdmin(request, env);
+      if (admin instanceof Response) return admin;
+      const body = await request.json<{ namespace: string }>();
+      if (!body.namespace) return jsonResponse({ error: 'missing namespace' }, 400);
+      await stopPullsForNamespace(body.namespace, env);
+      return jsonResponse({ ok: true });
+    }
     if (path === '/api/admin/puller-secret' && request.method === 'GET') {
       const admin = await requireAdmin(request, env);
       if (admin instanceof Response) return admin;
