@@ -36,6 +36,9 @@ anyhow = { workspace = true }
 # URL
 url = { workspace = true }
 
+# TLS
+rustls = { workspace = true }
+
 # WebSocket client
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }

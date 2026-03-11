@@ -48,4 +48,5 @@ base64 = "0.22.1"
 
 # WebSocket client
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 futures-util = "0.3"
