@@ -3,13 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>MoQpush — Push once, stream everywhere</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; }
     .hero { text-align: center; padding: 80px 24px 40px; }
-    .logo { font-size: 3.2em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
-    .logo span { color: #667eea; }
+    .logo { display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 8px; }
+    .logo-icon { width: 56px; height: 56px; filter: drop-shadow(0 0 10px rgba(124, 58, 237, 0.5)); }
+    .logo-text { font-size: 3.2em; font-weight: 700; letter-spacing: -0.02em; }
+    .logo-text .mo { background: linear-gradient(135deg, #a78bfa, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .logo-text .q { background: linear-gradient(135deg, #a78bfa, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .logo-text .push { color: #fff; }
     .tagline { color: #888; font-size: 1.15em; margin-bottom: 40px; }
     .cta { display: flex; gap: 16px; justify-content: center; margin-bottom: 60px; }
     .cta a { padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 1em; transition: all 0.2s; }
@@ -57,7 +62,21 @@
 </head>
 <body>
   <div class="hero">
-    <div class="logo">Mo<span>Q</span>push</div>
+    <div class="logo">
+      <svg class="logo-icon" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="50" r="48" fill="url(#bgG)"/>
+        <circle cx="48" cy="44" r="22" fill="none" stroke="url(#ltG)" stroke-width="7" opacity="0.95"/>
+        <path d="M62 58 L78 74" stroke="url(#ltG)" stroke-width="7" stroke-linecap="round" opacity="0.95"/>
+        <path d="M72 76 L78 74 L76 68" stroke="url(#ltG)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95"/>
+        <path d="M75 30 Q82 36 75 42" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.4"/>
+        <path d="M80 26 Q90 36 80 46" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.25"/>
+        <defs>
+          <linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4c1d95"/><stop offset="50%" stop-color="#6d28d9"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+          <linearGradient id="ltG" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#e9d5ff"/><stop offset="100%" stop-color="#ffffff"/></linearGradient>
+        </defs>
+      </svg>
+      <span class="logo-text"><span class="mo">Mo</span><span class="q">Q</span><span class="push">push</span></span>
+    </div>
     <p class="tagline">Push once, stream everywhere — MoQ stream pre-positioning service</p>
     <div class="cta">
       <a href="/admin" class="primary">Dashboard</a>
