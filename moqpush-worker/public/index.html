@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <title>MoQpush — Push once, stream everywhere</title>
+  <title>MoQpush — Global MoQ CDN for Low Latency CMAF</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; }
@@ -118,124 +118,102 @@
       </svg>
       <h1>MoQpush</h1>
     </a>
-    <p class="tagline">Push once, stream everywhere</p>
-    <div class="cta">
-      <a href="/admin" class="primary">Dashboard</a>
-      <a href="https://github.com/erikherz/moqpush" class="secondary">GitHub</a>
-    </div>
+    <p class="tagline">Global MoQ CDN for Low Latency CMAF</p>
   </div>
 
   <div class="workflow-section">
-    <div class="section-label">How It Works</div>
-    <div class="section-title">End-to-end ultra-low-latency streaming</div>
+    <div class="section-title">How It Works</div>
     <div class="workflow">
       <div class="step">
         <div class="step-icon ingest">&#9881;</div>
         <div class="step-name">Encoder</div>
-        <div class="step-desc">DASH-IF Ingest (CMAF-IF) from your encoder</div>
-        <a class="step-link" href="https://www.ateme.com/product-titan-software/" target="_blank">Ateme Titan Live</a>
-      </div>
-      <div class="arrow">&#10140;</div>
-      <div class="step">
-        <div class="step-icon http">&#8679;</div>
-        <div class="step-name">HTTP PUT</div>
-        <div class="step-desc">moqpush-app receives CMAF segments via HTTP PUT</div>
+        <div class="step-desc">DASH-IF Ingest (CMAF) from your encoder</div>
       </div>
       <div class="arrow">&#10140;</div>
       <div class="step">
         <div class="step-icon cloud">&#9729;</div>
         <div class="step-name">Cloudflare MoQ</div>
         <div class="step-desc">Published to Cloudflare's global MoQ relay network</div>
-        <a class="step-link" href="https://blog.cloudflare.com/moq/" target="_blank">MoQ Streaming</a>
       </div>
       <div class="arrow">&#10140;</div>
       <div class="step">
         <div class="step-icon orch">&#9741;</div>
         <div class="step-name">MoQpush</div>
-        <div class="step-desc">Orchestrated edge servers pull streams to warm Cloudflare's cache</div>
+        <div class="step-desc">Orchestrated edge servers pull streams to warm relays</div>
       </div>
       <div class="arrow">&#10140;</div>
       <div class="step">
         <div class="step-icon play">&#9654;</div>
         <div class="step-name">Playback</div>
-        <div class="step-desc">Shaka Player via WebTransport — instant, global playback</div>
+        <div class="step-desc">Shaka Player with MoQ streaming support</div>
       </div>
     </div>
   </div>
 
   <div class="getting-started">
-    <div class="section-label">Getting Started</div>
-    <div class="section-title">Start streaming in minutes</div>
+    <div class="section-title">Getting Started</div>
     <div class="steps-list">
       <div class="gs-step">
         <h3>Sign in and create a namespace</h3>
-        <p>Go to the <a href="/admin" style="color:#60a5fa">Dashboard</a> and sign in with Google or Discord. Create a namespace (e.g. <code>my-stream</code>) and select which regions to pre-position into. Your <strong>Push Key</strong> will be generated automatically — click it to copy.</p>
+        <p>Go to the <a href="/admin" style="color:#60a5fa">Dashboard</a> and sign in with Google or Discord. Create a namespace (e.g. <code>my-stream</code>) and select which regions to warm.</p>
       </div>
       <div class="gs-step">
-        <h3>Build and run moqpush-app</h3>
-        <p>Clone the repo and build the publisher binary:</p>
-        <pre><span class="comment"># Build the publisher</span>
-cargo build --release -p moqpush-app
-
-<span class="comment"># Run it with your Push Key</span>
-./target/release/moqpush-app \
-  <span class="flag">--push-key</span> <span class="val">mpk_YOUR_PUSH_KEY_HERE</span> \
-  <span class="flag">--port</span> <span class="val">9078</span></pre>
+        <h3>Run the MoQpush app</h3>
+        <pre><span class="comment"># Run it with your Push Key</span>
+./moqpush-app <span class="flag">--push-key</span> <span class="val">mpk_YOUR_PUSH_KEY_HERE</span> <span class="flag">--port</span> <span class="val">8888</span></pre>
         <p>The app will authenticate with moqpush.com, get the relay URL for your namespace, and start listening for CMAF-IF ingest on the specified port.</p>
       </div>
       <div class="gs-step">
         <h3>Point your encoder</h3>
-        <p>Configure your encoder (e.g. Ateme Titan Live, FFmpeg, OBS with CMAF output) to push CMAF-IF segments via HTTP PUT to:</p>
-        <pre><span class="url">http://localhost:9078</span></pre>
+        <p>Configure your encoder (e.g. Ateme Titan Live, FFmpeg, GPAC) to push CMAF-IF segments via HTTP PUT to:</p>
+        <pre><span class="url">http://localhost:8888</span></pre>
         <p>Once the first init segment arrives, moqpush-app connects to the Cloudflare MoQ relay and begins publishing. Your configured edge servers will automatically start pulling to warm the network.</p>
       </div>
       <div class="gs-step">
         <h3>Share the playback link</h3>
         <p>Your stream is live! Share the link with anyone:</p>
         <pre><span class="url">https://moqpush.com/my-stream</span></pre>
-        <p>Viewers get sub-second latency playback via Shaka Player and WebTransport — no plugins, no apps, just a browser.</p>
+        <p>Viewers get low latency playback via Shaka Player and WebTransport in a browser.</p>
       </div>
     </div>
   </div>
 
   <div class="features">
-    <div class="section-label">Features</div>
-    <div class="section-title">Built for live production</div>
+    <div class="section-title">Features</div>
     <div class="feature-grid">
       <div class="feature">
         <h3>Global Pre-positioning</h3>
-        <p>Edge servers in 5 regions pull your stream through Cloudflare, warming the network before viewers connect.</p>
+        <p>Edge servers in 5 regions pull your stream through Cloudflare.</p>
       </div>
       <div class="feature">
-        <h3>Ultra-low Latency</h3>
-        <p>MoQ Transport (draft-14) over QUIC/WebTransport delivers sub-second glass-to-glass latency.</p>
+        <h3>Low Latency</h3>
+        <p>MoQ over QUIC/WebTransport delivers low latency streaming.</p>
       </div>
       <div class="feature">
         <h3>Simple Ingest</h3>
-        <p>Standard DASH-IF CMAF ingest over HTTP PUT — works with any encoder supporting the spec.</p>
+        <p>Standard DASH-IF CMAF ingest over HTTP PUT.</p>
       </div>
       <div class="feature">
         <h3>Real-time Stats</h3>
-        <p>Live publisher and player metrics, per-region warm status, and WebSocket-driven dashboards.</p>
+        <p>Live publisher and player metrics, per-region warm status, and real-time dashboards.</p>
       </div>
       <div class="feature">
         <h3>One-click Sharing</h3>
-        <p>Share a link like moqpush.com/your-stream and anyone can watch instantly in their browser.</p>
+        <p>Share a link and anyone can watch in their browser.</p>
       </div>
       <div class="feature">
-        <h3>Cloudflare Powered</h3>
-        <p>Worker + Durable Objects handle auth, orchestration, and stats. Scales automatically.</p>
+        <h3>Secure</h3>
+        <p>QUIC is always TLS 1.3 end-to-end. CMAF DRM is supported.</p>
       </div>
     </div>
   </div>
 
   <div class="why-section">
-    <div class="section-label">Why MoQ &amp; QUIC</div>
-    <div class="section-title">The next generation of live streaming</div>
+    <div class="section-title">Why MoQ &amp; QUIC</div>
     <div class="why-grid">
       <div class="why-card">
         <h3>Beyond HLS &amp; DASH</h3>
-        <p>Traditional ABR protocols buffer 6-30 seconds of content, making true live interaction impossible. MoQ Transport delivers media over QUIC streams with <span class="highlight">sub-second latency</span> while maintaining broadcast-scale reliability — no trade-off required.</p>
+        <p>Traditional ABR protocols buffer 6-30 seconds of content, making true live interaction impossible. MoQ Transport delivers media over QUIC streams with <span class="highlight">low latency</span> while maintaining broadcast-scale reliability — no trade-off required.</p>
       </div>
       <div class="why-card">
         <h3>No Head-of-Line Blocking</h3>
@@ -251,7 +229,7 @@ cargo build --release -p moqpush-app
       </div>
       <div class="why-card">
         <h3>Priority-Based Congestion</h3>
-        <p>When bandwidth drops, MoQ doesn't blindly drop frames like WebRTC. Subscriptions carry <span class="highlight">priority levels</span> — the QUIC library transmits packets in priority order. Low-res monitoring streams survive while high-res feeds gracefully degrade.</p>
+        <p>When bandwidth drops, MoQ doesn't blindly drop frames like WebRTC. Subscriptions carry <span class="highlight">priority levels</span> — the QUIC library transmits packets in priority order. Low-res streams and audio survive while high-res feeds gracefully degrade.</p>
       </div>
       <div class="why-card">
         <h3>Encrypted by Default</h3>
@@ -263,17 +241,15 @@ cargo build --release -p moqpush-app
       </div>
       <div class="why-card">
         <h3>Production Proven</h3>
-        <p>MoQ is not theoretical — it's been <span class="highlight">deployed in production for over two years</span> by organizations including Saronic Technologies for maritime autonomous operations, proving real-world reliability in the harshest network conditions.</p>
+        <p>MoQ is not theoretical — it's been <span class="highlight">deployed in production</span>, proving real-world reliability in harsh network conditions.</p>
       </div>
     </div>
   </div>
 
   <div class="request-section">
-    <div class="section-label">Private Beta</div>
     <div class="section-title">Request Binaries</div>
     <div class="request-box">
       <h3>Get early access to MoQpush</h3>
-      <p class="subtitle">Pre-built binaries for macOS, Linux, and Windows. We'll send you a download link and Push Key.</p>
       <input type="text" id="req-name" placeholder="Name">
       <input type="email" id="req-email" placeholder="Email">
       <button id="req-submit" onclick="submitRequest()">Submit</button>
