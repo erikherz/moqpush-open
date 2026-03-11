@@ -65,6 +65,29 @@
     .feature h3 { font-size: 0.95em; margin-bottom: 6px; color: #fff; }
     .feature p { font-size: 0.8em; color: #888; line-height: 1.5; }
 
+    /* Why MoQ */
+    .why-section { max-width: 800px; margin: 0 auto; padding: 0 24px 80px; }
+    .why-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .why-card { background: #111; border: 1px solid #1a1a1a; border-radius: 10px; padding: 20px; }
+    .why-card h3 { font-size: 0.95em; margin-bottom: 8px; color: #fff; }
+    .why-card p { font-size: 0.8em; color: #888; line-height: 1.6; }
+    .why-card .highlight { color: #60a5fa; font-weight: 500; }
+    @media (max-width: 600px) { .why-grid { grid-template-columns: 1fr; } }
+
+    /* Request binaries modal */
+    .request-section { max-width: 560px; margin: 0 auto; padding: 0 24px 80px; text-align: center; }
+    .request-box { background: #111; border: 1px solid #1a1a1a; border-radius: 12px; padding: 32px; }
+    .request-box h3 { font-size: 1.1em; margin-bottom: 8px; color: #fff; }
+    .request-box .subtitle { font-size: 0.85em; color: #888; margin-bottom: 20px; }
+    .request-box input { width: 100%; background: #0d1117; border: 1px solid #333; color: #e5e5e5; padding: 10px 14px; border-radius: 6px; font-size: 0.9em; margin-bottom: 10px; font-family: inherit; }
+    .request-box input:focus { outline: none; border-color: #3b82f6; }
+    .request-box button { width: 100%; background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: #fff; border: none; padding: 12px; border-radius: 6px; font-size: 0.95em; font-weight: 600; cursor: pointer; font-family: inherit; transition: opacity 0.2s; }
+    .request-box button:hover { opacity: 0.9; }
+    .request-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .request-msg { margin-top: 12px; font-size: 0.85em; min-height: 1.2em; }
+    .request-msg.success { color: #4ade80; }
+    .request-msg.error { color: #f87171; }
+
     .footer { text-align: center; padding: 40px 24px; border-top: 1px solid #1a1a1a; color: #525252; font-size: 0.8em; }
     .footer a { color: #60a5fa; text-decoration: none; }
 
@@ -205,6 +228,101 @@ cargo build --release -p moqpush-app
       </div>
     </div>
   </div>
+
+  <div class="why-section">
+    <div class="section-label">Why MoQ &amp; QUIC</div>
+    <div class="section-title">The next generation of live streaming</div>
+    <div class="why-grid">
+      <div class="why-card">
+        <h3>Beyond HLS &amp; DASH</h3>
+        <p>Traditional ABR protocols buffer 6-30 seconds of content, making true live interaction impossible. MoQ Transport delivers media over QUIC streams with <span class="highlight">sub-second latency</span> while maintaining broadcast-scale reliability — no trade-off required.</p>
+      </div>
+      <div class="why-card">
+        <h3>No Head-of-Line Blocking</h3>
+        <p>Unlike TCP-based protocols (RTMP, HLS, DASH), QUIC provides <span class="highlight">independent stream multiplexing</span>. A lost packet on one video track doesn't stall audio or other tracks. Each media stream flows independently through the connection.</p>
+      </div>
+      <div class="why-card">
+        <h3>Network Resilience</h3>
+        <p>QUIC's Connection ID replaces TCP's fragile 4-tuple. Streams <span class="highlight">survive WiFi-to-cellular handoffs</span>, NAT rebinding, and IP changes seamlessly — the connection just keeps going. Critical for mobile and field production.</p>
+      </div>
+      <div class="why-card">
+        <h3>Pull-Based Architecture</h3>
+        <p>Unlike push-based protocols (WebRTC, SRT, RTMP) that stream constantly regardless of viewers, MoQ only transmits tracks when explicitly subscribed. <span class="highlight">Bandwidth-efficient by design</span> — critical for satellite, cellular, and constrained networks.</p>
+      </div>
+      <div class="why-card">
+        <h3>Priority-Based Congestion</h3>
+        <p>When bandwidth drops, MoQ doesn't blindly drop frames like WebRTC. Subscriptions carry <span class="highlight">priority levels</span> — the QUIC library transmits packets in priority order. Low-res monitoring streams survive while high-res feeds gracefully degrade.</p>
+      </div>
+      <div class="why-card">
+        <h3>Encrypted by Default</h3>
+        <p>QUIC mandates TLS 1.3 and encrypts packet headers — even packet numbers. <span class="highlight">No middlebox interference</span>, no ISP throttling, no protocol ossification. Uses UDP port 443 for universal firewall traversal.</p>
+      </div>
+      <div class="why-card">
+        <h3>Userspace Innovation</h3>
+        <p>Unlike TCP (locked in OS kernels), QUIC runs in userspace. Apps ship their own implementation with <span class="highlight">modern congestion control</span> (BBR) without waiting for OS updates. Deploy improvements instantly across all platforms.</p>
+      </div>
+      <div class="why-card">
+        <h3>Production Proven</h3>
+        <p>MoQ is not theoretical — it's been <span class="highlight">deployed in production for over two years</span> by organizations including Saronic Technologies for maritime autonomous operations, proving real-world reliability in the harshest network conditions.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="request-section">
+    <div class="section-label">Private Beta</div>
+    <div class="section-title">Request Binaries</div>
+    <div class="request-box">
+      <h3>Get early access to MoQpush</h3>
+      <p class="subtitle">Pre-built binaries for macOS, Linux, and Windows. We'll send you a download link and Push Key.</p>
+      <input type="text" id="req-name" placeholder="Name">
+      <input type="email" id="req-email" placeholder="Email">
+      <button id="req-submit" onclick="submitRequest()">Submit</button>
+      <div class="request-msg" id="req-msg"></div>
+    </div>
+  </div>
+
+  <script>
+    async function submitRequest() {
+      const name = document.getElementById('req-name').value.trim();
+      const email = document.getElementById('req-email').value.trim();
+      const btn = document.getElementById('req-submit');
+      const msg = document.getElementById('req-msg');
+
+      if (!name || !email) {
+        msg.textContent = 'Please enter your name and email.';
+        msg.className = 'request-msg error';
+        return;
+      }
+
+      btn.disabled = true;
+      msg.textContent = '';
+      msg.className = 'request-msg';
+
+      try {
+        const resp = await fetch('/api/request-binaries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email }),
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+          msg.textContent = data.message;
+          msg.className = 'request-msg success';
+          document.getElementById('req-name').value = '';
+          document.getElementById('req-email').value = '';
+        } else {
+          msg.textContent = data.error || 'Something went wrong.';
+          msg.className = 'request-msg error';
+        }
+      } catch (e) {
+        msg.textContent = 'Network error. Please try again.';
+        msg.className = 'request-msg error';
+      }
+
+      btn.disabled = false;
+    }
+  </script>
 
   <div class="footer">
     <p>MoQpush &mdash; MoQ Transport draft-14 &middot; MSF draft-00 &middot; CMSF draft-00</p>

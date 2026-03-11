@@ -184,6 +184,11 @@ export default {
       return handlePlayerStatsPush(request, env);
     }
 
+    // --- Binary request signup ---
+    if (path === '/api/request-binaries' && request.method === 'POST') {
+      return handleBinaryRequest(request, env);
+    }
+
     // --- Health ---
     if (path === '/api/health') {
       return jsonResponse({ status: 'ok' });
@@ -786,6 +791,28 @@ async function handlePlayerStatsPush(request: Request, env: Env): Promise<Respon
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, role: 'player' }),
   }));
+}
+
+// --- Binary request signup ---
+
+async function handleBinaryRequest(request: Request, env: Env): Promise<Response> {
+  const body = await request.json<{ name: string; email: string }>();
+  if (!body.name || !body.email) {
+    return jsonResponse({ error: 'missing name or email' }, 400);
+  }
+
+  try {
+    await env.DB.prepare(
+      'INSERT INTO binary_requests (name, email) VALUES (?, ?)'
+    ).bind(body.name.trim(), body.email.trim().toLowerCase()).run();
+  } catch (e: any) {
+    if (e.message?.includes('UNIQUE')) {
+      return jsonResponse({ ok: true, message: 'Already registered — we will be in touch!' });
+    }
+    throw e;
+  }
+
+  return jsonResponse({ ok: true, message: 'Request submitted! We will be in touch.' }, 201);
 }
 
 async function handleStatsSnapshot(request: Request, env: Env): Promise<Response> {

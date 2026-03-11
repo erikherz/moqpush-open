@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS pullers (
   heartbeat_at INTEGER DEFAULT (unixepoch())
 );
 
+-- Binary request signups
+CREATE TABLE IF NOT EXISTS binary_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  created_at INTEGER DEFAULT (unixepoch())
+);
+
 -- Pre-seed known puller nodes
 INSERT OR IGNORE INTO pullers (node, url, region)
 VALUES
