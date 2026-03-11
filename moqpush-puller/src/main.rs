@@ -43,10 +43,6 @@ struct Args {
     #[arg(long, default_value_t = 8080)]
     port: u16,
 
-    /// Disable TLS certificate verification
-    #[arg(long)]
-    tls_disable_verify: bool,
-
     /// Puller secret (shared with worker for authentication)
     #[arg(long, env = "MOQPUSH_PULLER_SECRET")]
     secret: Option<String>,
@@ -85,10 +81,9 @@ async fn main() -> Result<()> {
     });
 
     // Main loop: connect to worker WebSocket, process commands, reconnect on failure
-    let tls_disable_verify = args.tls_disable_verify;
     loop {
         info!("Connecting to worker WebSocket...");
-        match run_ws_session(&args, active_pulls.clone(), tls_disable_verify).await {
+        match run_ws_session(&args, active_pulls.clone()).await {
             Ok(()) => info!("WebSocket session closed normally"),
             Err(e) => warn!("WebSocket session error: {}", e),
         }
@@ -110,7 +105,6 @@ async fn main() -> Result<()> {
 async fn run_ws_session(
     args: &Args,
     active_pulls: ActivePulls,
-    tls_disable_verify: bool,
 ) -> Result<()> {
     // Build WebSocket URL
     let ws_base = args.worker_url
@@ -165,10 +159,8 @@ async fn run_ws_session(
                         info!("Pull command: '{}' via {}", namespace, relay_url);
                         let ns = namespace.clone();
                         let pulls = active_pulls.clone();
-                        let tls_dv = tls_disable_verify;
-
                         let handle = tokio::spawn(async move {
-                            match run_pull_session(&relay_url, &ns, tls_dv).await {
+                            match run_pull_session(&relay_url, &ns).await {
                                 Ok(()) => info!("Pull session for '{}' ended normally", ns),
                                 Err(e) => warn!("Pull session for '{}' error: {}", ns, e),
                             }
@@ -224,17 +216,13 @@ async fn run_ws_session(
 }
 
 /// Connect to Cloudflare relay and drain a namespace (keeps stream flowing)
-async fn run_pull_session(relay_url: &str, namespace: &str, tls_disable_verify: bool) -> Result<()> {
+async fn run_pull_session(relay_url: &str, namespace: &str) -> Result<()> {
     info!("Connecting to {} to pull '{}'...", relay_url, namespace);
 
     let origin = moq_lite::Origin::produce();
     let consumer = origin.consume();
 
-    let mut client_config = moq_native::ClientConfig::default();
-    if tls_disable_verify {
-        client_config.tls.disable_verify = Some(true);
-    }
-
+    let client_config = moq_native::ClientConfig::default();
     let client = client_config.init()?;
 
     let session = client

@@ -9,10 +9,13 @@ use tracing::{error, info, warn};
 use moq_lite::Origin;
 use moq_mux::CatalogProducer;
 
-use moqcdn_ingest::http_ingest;
-use moqcdn_ingest::publisher::Publisher;
+mod http_ingest;
+mod mp4;
+mod publisher;
 
-/// Default Cloudflare MoQ relay (used for --no-auth or explicit override)
+use publisher::Publisher;
+
+/// Default Cloudflare MoQ relay
 const DEFAULT_RELAY: &str = "https://draft-14.cloudflare.mediaoverquic.com";
 
 #[derive(Parser, Debug)]
@@ -21,28 +24,19 @@ const DEFAULT_RELAY: &str = "https://draft-14.cloudflare.mediaoverquic.com";
 struct Args {
     /// Push key (from moqpush admin)
     #[arg(long, env = "MOQPUSH_KEY")]
-    push_key: String,
+    push_key: Option<String>,
 
     /// Worker URL for auth + heartbeat + stats + orchestration
     #[arg(long, default_value = "https://moqpush.com")]
     worker_url: String,
 
     /// Port for HTTP CMAF-IF ingest
-    #[arg(long, default_value_t = 9078)]
+    #[arg(long, default_value_t = 8888)]
     port: u16,
 
-    /// Override relay URL (default: Cloudflare relay)
+    /// Test mode: accept and print incoming data without connecting to worker or relay
     #[arg(long)]
-    relay_url: Option<String>,
-
-    /// Disable TLS certificate verification (for local testing)
-    #[arg(long)]
-    tls_disable_verify: bool,
-
-    /// Skip worker authentication (for local testing)
-    #[arg(long)]
-    no_auth: bool,
-
+    test: bool,
 }
 
 #[tokio::main]
@@ -58,6 +52,15 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    if args.test {
+        info!("TEST MODE — accepting CMAF-IF on port {}, printing and dropping data", args.port);
+        run_test_mode(args.port).await?;
+        return Ok(());
+    }
+
+    let push_key = args.push_key
+        .ok_or_else(|| anyhow::anyhow!("--push-key is required (or use --test for test mode)"))?;
+
     let instance_id: String = {
         let mut rng = rand::rng();
         (0..16).map(|_| format!("{:x}", rng.random_range(0..16u8))).collect()
@@ -65,60 +68,46 @@ async fn main() -> Result<()> {
     info!("Instance ID: {}", instance_id);
 
     // Authenticate with the moqpush worker
-    let namespace: String;
-    let relay_url: String;
+    info!("Authenticating with worker at {}...", args.worker_url);
+    let client = reqwest::Client::new();
 
-    if !args.no_auth {
-        info!("Authenticating with worker at {}...", args.worker_url);
-        let client = reqwest::Client::new();
+    let auth_resp = client
+        .post(format!("{}/api/push/auth", args.worker_url))
+        .json(&serde_json::json!({
+            "push_key": push_key,
+            "instance_id": instance_id,
+        }))
+        .send()
+        .await?;
 
-        let auth_resp = client
-            .post(format!("{}/api/push/auth", args.worker_url))
-            .json(&serde_json::json!({
-                "push_key": args.push_key,
-                "instance_id": instance_id,
-            }))
-            .send()
-            .await?;
-
-        let status = auth_resp.status();
-        if !status.is_success() {
-            let body = auth_resp.text().await.unwrap_or_default();
-            if status.as_u16() == 409 {
-                return Err(anyhow::anyhow!("Namespace already in use by another instance: {}", body));
-            }
-            return Err(anyhow::anyhow!("Auth failed ({}): {}", status, body));
+    let status = auth_resp.status();
+    if !status.is_success() {
+        let body = auth_resp.text().await.unwrap_or_default();
+        if status.as_u16() == 409 {
+            return Err(anyhow::anyhow!("Namespace already in use by another instance: {}", body));
         }
-
-        let auth_body: serde_json::Value = auth_resp.json().await?;
-        namespace = auth_body["namespace"].as_str().unwrap_or("").to_string();
-        // Use CLI override > worker DB relay_url > default
-        relay_url = args.relay_url.unwrap_or_else(|| {
-            auth_body["relay_url"]
-                .as_str()
-                .unwrap_or(DEFAULT_RELAY)
-                .to_string()
-        });
-
-        info!("Authenticated: namespace='{}', relay='{}'", namespace, relay_url);
-    } else {
-        info!("Skipping worker auth (--no-auth)");
-        namespace = "local-test".to_string();
-        relay_url = args.relay_url.unwrap_or_else(|| DEFAULT_RELAY.to_string());
+        return Err(anyhow::anyhow!("Auth failed ({}): {}", status, body));
     }
+
+    let auth_body: serde_json::Value = auth_resp.json().await?;
+    let namespace = auth_body["namespace"].as_str().unwrap_or("").to_string();
+    let relay_url = auth_body["relay_url"]
+        .as_str()
+        .unwrap_or(DEFAULT_RELAY)
+        .to_string();
+
+    info!("Authenticated: namespace='{}', relay='{}'", namespace, relay_url);
 
     // Create shutdown channel
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     // Spawn push key heartbeat (lock renewal)
-    if !args.no_auth {
-        let hb_worker_url = args.worker_url.clone();
-        let hb_key = args.push_key.clone();
-        let hb_instance = instance_id.clone();
-        tokio::spawn(async move {
-            run_push_heartbeat(hb_worker_url, hb_key, hb_instance, shutdown_tx).await;
-        });
-    }
+    let hb_worker_url = args.worker_url.clone();
+    let hb_key = push_key.clone();
+    let hb_instance = instance_id.clone();
+    tokio::spawn(async move {
+        run_push_heartbeat(hb_worker_url, hb_key, hb_instance, shutdown_tx).await;
+    });
 
     // Create moq-lite content model
     let origin = Origin::produce();
@@ -153,10 +142,7 @@ async fn main() -> Result<()> {
     info!("First init received — connecting to Cloudflare relay at {}...", relay_url);
 
     let relay_url_parsed: url::Url = relay_url.parse()?;
-    let mut client_config = moq_native::ClientConfig::default();
-    if args.tls_disable_verify {
-        client_config.tls.disable_verify = Some(true);
-    }
+    let client_config = moq_native::ClientConfig::default();
 
     let client = client_config.init()?;
     let session = client
@@ -167,34 +153,32 @@ async fn main() -> Result<()> {
     info!("Connected to Cloudflare relay");
 
     // Announce broadcast to the worker
-    if !args.no_auth {
-        let dir_client = reqwest::Client::new();
-        let announce_resp = dir_client
-            .post(format!("{}/api/push/announce", args.worker_url))
-            .json(&serde_json::json!({
-                "push_key": args.push_key,
-                "namespace": namespace,
-                "relay_url": relay_url,
-                "instance_id": instance_id,
-            }))
-            .send()
-            .await?;
+    let dir_client = reqwest::Client::new();
+    let announce_resp = dir_client
+        .post(format!("{}/api/push/announce", args.worker_url))
+        .json(&serde_json::json!({
+            "push_key": push_key,
+            "namespace": namespace,
+            "relay_url": relay_url,
+            "instance_id": instance_id,
+        }))
+        .send()
+        .await?;
 
-        if announce_resp.status().is_success() {
-            info!("Broadcast announced: {} -> {}", namespace, relay_url);
-        } else {
-            warn!("Failed to announce broadcast: {}", announce_resp.status());
-        }
-
-        // Spawn stats + heartbeat loop
-        let hb_worker = args.worker_url.clone();
-        let hb_key = args.push_key.clone();
-        let hb_ns = namespace.clone();
-        let hb_instance = instance_id.clone();
-        tokio::spawn(async move {
-            run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance).await;
-        });
+    if announce_resp.status().is_success() {
+        info!("Broadcast announced: {} -> {}", namespace, relay_url);
+    } else {
+        warn!("Failed to announce broadcast: {}", announce_resp.status());
     }
+
+    // Spawn stats + heartbeat loop
+    let hb_worker = args.worker_url.clone();
+    let hb_key = push_key.clone();
+    let hb_ns = namespace.clone();
+    let hb_instance = instance_id.clone();
+    tokio::spawn(async move {
+        run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance).await;
+    });
 
     // Run until session closes or shutdown
     tokio::select! {
@@ -210,21 +194,99 @@ async fn main() -> Result<()> {
     }
 
     // Clean up
-    if !args.no_auth {
-        let client = reqwest::Client::new();
-        let _ = client
-            .delete(format!("{}/api/push/announce", args.worker_url))
-            .json(&serde_json::json!({
-                "push_key": args.push_key,
-                "namespace": namespace,
-            }))
-            .send()
-            .await;
-        info!("Broadcast removed from directory");
-    }
+    let client = reqwest::Client::new();
+    let _ = client
+        .delete(format!("{}/api/push/announce", args.worker_url))
+        .json(&serde_json::json!({
+            "push_key": push_key,
+            "namespace": namespace,
+        }))
+        .send()
+        .await;
+    info!("Broadcast removed from directory");
 
     info!("moqpush-app shutting down");
     Ok(())
+}
+
+/// Test mode: accept HTTP PUT/POST, print info about incoming data, drop it
+async fn run_test_mode(port: u16) -> Result<()> {
+    use bytes::BytesMut;
+    use http_body_util::BodyExt;
+    use hyper::body::Incoming;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper::{Method, Request, Response, StatusCode};
+    use hyper_util::rt::TokioIo;
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = TcpListener::bind(addr).await?;
+    info!("TEST ingest server listening on http://0.0.0.0:{}", port);
+
+    loop {
+        let (stream, remote) = listener.accept().await?;
+        let io = TokioIo::new(stream);
+
+        tokio::spawn(async move {
+            let service = service_fn(move |req: Request<Incoming>| {
+                let remote = remote;
+                async move {
+                    if req.method() != Method::PUT && req.method() != Method::POST {
+                        return Ok::<_, hyper::Error>(Response::builder()
+                            .status(StatusCode::METHOD_NOT_ALLOWED)
+                            .body("Method not allowed".to_string())
+                            .unwrap());
+                    }
+
+                    let method = req.method().clone();
+                    let path = req.uri().path().to_string();
+                    let mut body = req.into_body();
+                    let mut buf = BytesMut::new();
+
+                    while let Some(frame) = body.frame().await {
+                        if let Ok(f) = frame {
+                            if let Some(chunk) = f.data_ref() {
+                                buf.extend_from_slice(chunk);
+                            }
+                        }
+                    }
+
+                    let is_init = mp4::has_moov(&buf);
+                    let is_media = mp4::has_moof(&buf);
+                    let kind = if is_init { "INIT" } else if is_media { "MEDIA" } else { "OTHER" };
+
+                    info!("TEST {} {} from {} — {} bytes [{}]", method, path, remote, buf.len(), kind);
+
+                    if is_init {
+                        if let Some(handler) = mp4::parse_handler_type(&buf) {
+                            let codec = mp4::parse_codec_from_init(&buf).unwrap_or_default();
+                            let timescale = mp4::parse_timescale(&buf).unwrap_or(0);
+                            info!("  INIT: handler={} codec={} timescale={}", handler, codec, timescale);
+                        }
+                    }
+                    if is_media {
+                        if let Some(bdt) = mp4::parse_base_decode_time(&buf) {
+                            let is_idr = mp4::fragment_starts_with_idr(&buf).unwrap_or(false);
+                            info!("  MEDIA: bdt={} idr={}", bdt, is_idr);
+                        }
+                    }
+
+                    Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .body("OK".to_string())
+                        .unwrap())
+                }
+            });
+
+            if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+                if !e.is_incomplete_message() {
+                    warn!("HTTP connection error: {}", e);
+                }
+            }
+        });
+    }
 }
 
 /// Push key heartbeat — renews lock every 10s

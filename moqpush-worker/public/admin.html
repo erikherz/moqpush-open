@@ -113,6 +113,7 @@
             <tr>
               <th>Namespace</th>
               <th>Push Key</th>
+              <th>Relay URL</th>
               <th>Pre-position</th>
               <th>Warm Status</th>
               <th>Status</th>
@@ -321,6 +322,9 @@
             </span>
           </td>
           <td>
+            <span class="relay-url" style="font-size:0.75em;color:#888;cursor:pointer" onclick="editRelay('${b.namespace}', this)" title="Click to edit">${b.relay_url || 'default'}</span>
+          </td>
+          <td>
             <div class="region-chips" onclick="editRegions('${b.namespace}', ${JSON.stringify(b.regions).replace(/"/g, '&quot;')})">
               ${(b.regions || []).length > 0
                 ? b.regions.map(r => `<span class="region-chip">${r}</span>`).join('')
@@ -384,6 +388,22 @@
       });
       if (resp.ok) {
         toast(`Updated regions for ${namespace}`);
+        loadNamespaces();
+      }
+    }
+
+    async function editRelay(namespace, el) {
+      const current = el.textContent.trim();
+      const val = prompt(`Relay URL for "${namespace}":`, current === 'default' ? '' : current);
+      if (val === null) return;
+      const relay_url = val.trim() || 'https://draft-14.cloudflare.mediaoverquic.com';
+      const resp = await fetch(`/api/admin/namespaces/${namespace}/relay`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relay_url }),
+      });
+      if (resp.ok) {
+        toast(`Updated relay for ${namespace}`);
         loadNamespaces();
       }
     }

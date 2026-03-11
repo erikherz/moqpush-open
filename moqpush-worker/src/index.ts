@@ -144,6 +144,10 @@ export default {
       const namespace = path.split('/api/admin/namespaces/')[1].replace('/regions', '');
       if (namespace) return handleAdminUpdateRegions(namespace, request, env);
     }
+    if (path.startsWith('/api/admin/namespaces/') && path.endsWith('/relay') && request.method === 'PUT') {
+      const namespace = path.split('/api/admin/namespaces/')[1].replace('/relay', '');
+      if (namespace) return handleAdminUpdateRelay(namespace, request, env);
+    }
     if (path.startsWith('/api/admin/namespaces/') && request.method === 'DELETE') {
       const namespace = path.split('/api/admin/namespaces/')[1];
       if (namespace) return handleAdminDeleteNamespace(namespace, request, env);
@@ -160,6 +164,11 @@ export default {
     }
     if (path === '/api/admin/pullers' && request.method === 'GET') {
       return handleAdminListPullers(request, env);
+    }
+    if (path === '/api/admin/puller-secret' && request.method === 'GET') {
+      const admin = await requireAdmin(request, env);
+      if (admin instanceof Response) return admin;
+      return jsonResponse({ secret: env.PULLER_SECRET || '' });
     }
 
     // --- Stats ---
@@ -624,6 +633,21 @@ async function handleAdminUpdateRegions(namespace: string, request: Request, env
   }
 
   return jsonResponse({ ok: true, namespace, regions: body.regions });
+}
+
+async function handleAdminUpdateRelay(namespace: string, request: Request, env: Env): Promise<Response> {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const body = await request.json<{ relay_url: string }>();
+  const relayUrl = (body.relay_url || '').trim();
+  if (!relayUrl) return jsonResponse({ error: 'relay_url required' }, 400);
+
+  await env.DB.prepare(
+    'UPDATE namespaces SET relay_url = ? WHERE namespace = ?'
+  ).bind(relayUrl, namespace).run();
+
+  return jsonResponse({ ok: true, namespace, relay_url: relayUrl });
 }
 
 async function handleAdminDeleteNamespace(namespace: string, request: Request, env: Env): Promise<Response> {

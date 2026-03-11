@@ -59,6 +59,7 @@
     .owner-label { font-size: 0.75em; color: #737373; margin-bottom: 8px; }
 
     .empty { text-align: center; color: #525252; padding: 40px 0; }
+    .key.hidden { filter: blur(5px); user-select: none; }
   </style>
 </head>
 <body>
@@ -78,6 +79,12 @@
   </div>
 
   <div class="content">
+    <div class="section-title">Puller Secret</div>
+    <div style="margin-bottom:20px;">
+      <span class="key hidden" id="puller-secret" onclick="this.classList.toggle('hidden')" style="font-family:monospace;font-size:0.85em;color:#888;cursor:pointer;background:#111;padding:6px 12px;border-radius:6px;border:1px solid #1a1a1a;display:inline-block">Loading...</span>
+      <span style="font-size:0.7em;color:#525252;margin-left:8px">Click to reveal. Use as --secret or MOQPUSH_PULLER_SECRET env var.</span>
+    </div>
+
     <div class="section-title">Puller Servers</div>
     <div class="puller-grid" id="puller-grid">
       <div class="empty">Connecting...</div>
@@ -222,6 +229,14 @@
       pullerWs.onerror = () => pullerWs.close();
     }
 
+    async function loadPullerSecret() {
+      try {
+        const resp = await fetch('/api/admin/puller-secret');
+        const data = await resp.json();
+        document.getElementById('puller-secret').textContent = data.secret || '(not set)';
+      } catch {}
+    }
+
     // Auth check + init
     fetch('/api/auth/me').then(r => r.json()).then(d => {
       if (!d.authenticated) {
@@ -231,6 +246,7 @@
       }
       loadNamespaces();
       loadBroadcasts();
+      loadPullerSecret();
       connectPullerWs();
       // Refresh broadcasts every 10s
       setInterval(loadBroadcasts, 10000);

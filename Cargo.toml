@@ -10,9 +10,6 @@ moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
 moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
 moq-native = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
 
-# Ingest library (shared with moqcdn)
-moqcdn-ingest = { path = "../moqcdn/moqcdn-ingest" }
-
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
