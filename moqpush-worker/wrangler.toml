@@ -14,13 +14,13 @@ routes = [
 # KV Namespace (sessions, oauth_state, locks)
 [[kv_namespaces]]
 binding = "KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "c89577f16f9442c48bef25a0e609678c"
 
 # D1 Database (users, namespaces, pullers)
 [[d1_databases]]
 binding = "DB"
 database_name = "moqpush"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "d37ec7df-4a56-4daa-8bab-77bae2f27e74"
 
 # Durable Object for real-time stats aggregation
 [durable_objects]
