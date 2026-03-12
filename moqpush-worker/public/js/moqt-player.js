@@ -223,10 +223,11 @@ const GROUP_ORDER_DESCENDING = 0x02;
 const FILTER_LARGEST_OBJECT  = 0x02;
 const GROUP_END_STATUS       = 0x03;
 
-const MSG_PUBLISH_NAMESPACE  = 0x06;
-const MSG_PUBLISH_DONE       = 0x0b;
-const MSG_PUBLISH            = 0x1d;
-const MSG_PUBLISH_ERROR      = 0x1f;
+const MSG_PUBLISH_NAMESPACE     = 0x06;
+const MSG_PUBLISH_NAMESPACE_OK  = 0x07;
+const MSG_PUBLISH_DONE          = 0x0b;
+const MSG_PUBLISH               = 0x1d;
+const MSG_PUBLISH_ERROR         = 0x1f;
 
 // ═══════════════════════════════════════════════════════════════════
 // §4  MoqtPlayer
@@ -322,12 +323,17 @@ class MoqtPlayer {
     const sr = new MoqReader(serverBody);
     const serverVersion = await sr.varint();
     console.log(`[MoQT] Server version: 0x${serverVersion.toString(16)}`);
-    // Read and discard server parameters
+    // Read server parameters
     const numParams = await sr.varint();
     for (let i = 0; i < numParams; i++) {
       const paramId = await sr.varint();
       if (paramId % 2 === 0) {
-        await sr.varint(); // varint value
+        const val = await sr.varint();
+        console.log(`[MoQT] Server param ${paramId}=${val}`);
+        if (paramId === PARAM_MAX_REQUEST_ID) {
+          this.serverMaxRequestId = val;
+          console.log(`[MoQT] Server MaxRequestId: ${val}`);
+        }
       } else {
         const len = await sr.varint();
         await sr.read(len); // bytes value
@@ -377,6 +383,7 @@ class MoqtPlayer {
         const msgType = await this.controlReader.varint();
         const bodySize = await this.controlReader.u16();
         const bodyData = await this.controlReader.read(bodySize);
+        console.log(`[MoQT] Control msg type=0x${msgType.toString(16)} size=${bodySize}`);
         const br = new MoqReader(bodyData);
 
         switch (msgType) {
@@ -410,17 +417,22 @@ class MoqtPlayer {
             break;
           }
           case MSG_PUBLISH_NAMESPACE: {
-            // Relay announcing a namespace is available
+            // Relay announcing a namespace is available — respond with OK
             const pnReqId = await br.varint();
             const pnNsParts = await br.varint();
             const parts = [];
             for (let i = 0; i < pnNsParts; i++) parts.push(await br.string());
-            console.log(`[MoQT] PUBLISH_NAMESPACE id=${pnReqId} ns="${parts.join('/')}"`);
+            console.log(`[MoQT] PUBLISH_NAMESPACE id=${pnReqId} ns="${parts.join('/')}" — sending OK`);
+            // Respond with PUBLISH_NAMESPACE_OK (0x07)
+            const okBody = new MsgBuilder().varint(pnReqId).finish();
+            await this.controlWriter.varint(MSG_PUBLISH_NAMESPACE_OK);
+            await this.controlWriter.writeMessage(okBody);
             break;
           }
           case MSG_MAX_REQUEST_ID: {
             const maxId = await br.varint();
-            console.log(`[MoQT] MAX_REQUEST_ID: ${maxId}`);
+            this.serverMaxRequestId = maxId;
+            console.log(`[MoQT] MAX_REQUEST_ID updated: ${maxId}`);
             break;
           }
           case MSG_GOAWAY: {
@@ -636,43 +648,52 @@ class MoqtPlayer {
       this.catalogReceived = true;
 
       const tracks = catalog.tracks || [];
-      this.onStatus(`Subscribing to ${tracks.length} tracks...`);
 
+      // Classify tracks into video, audio, and other
+      const videoTracks = [];
+      const audioTracks = [];
       for (const track of tracks) {
-        const trackName = track.name;
-        if (!trackName) continue;
-
-        // Determine type
-        let type = 'video';
+        if (!track.name) continue;
         const selParams = track.selectionParams || {};
-        if (selParams.mimeType && selParams.mimeType.startsWith('audio')) {
-          type = 'audio';
-        } else if (trackName.startsWith('audio') || trackName.includes('audio')) {
-          type = 'audio';
-        } else if (track.renderGroup !== undefined) {
-          // MSF: video tracks have renderGroup
-          type = 'video';
+        const mime = selParams.mimeType || '';
+        if (mime.startsWith('audio') || track.name.includes('audio')) {
+          audioTracks.push(track);
+        } else if (mime.startsWith('video') || track.name.includes('video')) {
+          videoTracks.push(track);
+        } else {
+          console.log(`[MoQT] Skipping non-media track: ${track.name}`);
         }
+      }
+
+      // Pick highest quality video (last = highest bitrate/profile) and first audio
+      const selectedVideo = videoTracks.length > 0 ? videoTracks[videoTracks.length - 1] : null;
+      const selectedAudio = audioTracks.length > 0 ? audioTracks[0] : null;
+      const selected = [selectedVideo, selectedAudio].filter(Boolean);
+
+      console.log(`[MoQT] Selected tracks: video=${selectedVideo?.name} audio=${selectedAudio?.name}`);
+      this.onStatus(`Subscribing to ${selected.length} tracks...`);
+
+      for (const track of selected) {
+        const type = track === selectedVideo ? 'video' : 'audio';
 
         // Extract init data from catalog if available
         if (track.initData) {
           try {
             const initBytes = this._base64ToUint8Array(track.initData);
-            console.log(`[MoQT] Init from catalog: ${trackName} (${initBytes.byteLength}B)`);
+            console.log(`[MoQT] Init from catalog: ${track.name} (${initBytes.byteLength}B)`);
             this.appender.setInitSegment(type, initBytes);
           } catch (e) {
-            console.warn(`[MoQT] Failed to decode initData for ${trackName}:`, e);
+            console.warn(`[MoQT] Failed to decode initData for ${track.name}:`, e);
           }
         }
 
         // Subscribe to track — store type info
         const priority = type === 'video' ? 128 : 64;
-        this._subscribe(trackName, priority).then(alias => {
-          // Update track info with type
+        this._subscribe(track.name, priority).then(alias => {
           const info = this.trackAliasMap.get(alias);
           if (info) info.type = type;
         }).catch(e => {
-          console.error(`[MoQT] Failed to subscribe to ${trackName}:`, e);
+          console.error(`[MoQT] Failed to subscribe to ${track.name}:`, e);
         });
       }
 
