@@ -27,6 +27,8 @@ pub struct PublisherStats {
     pub video_height: AtomicU32,
     pub video_codec: std::sync::Mutex<String>,
     pub audio_codec: std::sync::Mutex<String>,
+    /// Latest catalog JSON with initData stripped out.
+    pub catalog_json: std::sync::Mutex<Option<serde_json::Value>>,
 }
 
 impl PublisherStats {
@@ -40,6 +42,7 @@ impl PublisherStats {
             video_height: AtomicU32::new(0),
             video_codec: std::sync::Mutex::new(String::new()),
             audio_codec: std::sync::Mutex::new(String::new()),
+            catalog_json: std::sync::Mutex::new(None),
         })
     }
 }
@@ -300,7 +303,20 @@ impl Publisher {
         match msf.to_string() {
             Ok(json) => {
                 let json_len = json.len();
-                // Log full catalog JSON once for debugging
+
+                // Store catalog snapshot (without initData) in shared stats
+                if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if let Some(tracks) = val.get_mut("tracks").and_then(|t| t.as_array_mut()) {
+                        for track in tracks.iter_mut() {
+                            if let Some(obj) = track.as_object_mut() {
+                                obj.remove("initData");
+                            }
+                        }
+                    }
+                    *self.stats.catalog_json.lock().unwrap() = Some(val);
+                }
+
+                // Log full catalog JSON periodically for debugging
                 let should_log = self.catalog_last_logged
                     .map(|t| t.elapsed().as_secs() >= 60)
                     .unwrap_or(true);

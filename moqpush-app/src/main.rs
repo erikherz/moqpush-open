@@ -365,6 +365,7 @@ async fn run_stats_loop(
         let uptime = start_time.elapsed().as_secs();
         let video_codec = stats.video_codec.lock().unwrap().clone();
         let audio_codec = stats.audio_codec.lock().unwrap().clone();
+        let catalog = stats.catalog_json.lock().unwrap().clone();
 
         // Push stats every second
         let _ = client
@@ -382,6 +383,7 @@ async fn run_stats_loop(
                 "video_height": stats.video_height.load(Relaxed),
                 "video_codec": if video_codec.is_empty() { None } else { Some(video_codec) },
                 "audio_codec": if audio_codec.is_empty() { None } else { Some(audio_codec) },
+                "catalog": catalog,
             }))
             .send()
             .await;
