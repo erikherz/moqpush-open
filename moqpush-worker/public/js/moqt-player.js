@@ -176,25 +176,33 @@ class MsgBuilder {
 
 class MoqWriter {
   #writer;
+  #lock = Promise.resolve();
 
   constructor(writable) {
     this.#writer = writable.getWriter();
   }
 
-  async write(data) { await this.#writer.write(data); }
+  async #rawWrite(data) { await this.#writer.write(data); }
 
-  async varint(v) { await this.write(encodeVarint(v)); }
-
-  async u16(v) {
-    const b = new Uint8Array(2);
-    new DataView(b.buffer).setUint16(0, v);
-    await this.write(b);
-  }
-
-  /** Write a u16-size-prefixed message body */
-  async writeMessage(body) {
-    await this.u16(body.byteLength);
-    await this.write(body);
+  /** Atomically write a control message: varint(type) + u16(size) + body */
+  async writeControlMessage(type, body) {
+    const prev = this.#lock;
+    let resolve;
+    this.#lock = new Promise(r => { resolve = r; });
+    await prev;
+    try {
+      const typeBytes = encodeVarint(type);
+      const sizeBytes = new Uint8Array(2);
+      new DataView(sizeBytes.buffer).setUint16(0, body.byteLength);
+      // Combine into single write for atomicity
+      const combined = new Uint8Array(typeBytes.byteLength + 2 + body.byteLength);
+      combined.set(typeBytes, 0);
+      combined.set(sizeBytes, typeBytes.byteLength);
+      combined.set(body, typeBytes.byteLength + 2);
+      await this.#rawWrite(combined);
+    } finally {
+      resolve();
+    }
   }
 
   close() { this.#writer.close().catch(() => {}); }
@@ -310,8 +318,7 @@ class MoqtPlayer {
       .string('moqpush-custom-player') // value
       .finish();
 
-    await this.controlWriter.varint(MSG_CLIENT_SETUP);
-    await this.controlWriter.writeMessage(body);
+    await this.controlWriter.writeControlMessage(MSG_CLIENT_SETUP, body);
 
     // SERVER_SETUP
     const serverType = await this.controlReader.varint();
@@ -364,8 +371,7 @@ class MoqtPlayer {
     const buf = body.finish();
 
     // Write: varint(0x03) + u16(size) + body
-    await this.controlWriter.varint(MSG_SUBSCRIBE);
-    await this.controlWriter.writeMessage(buf);
+    await this.controlWriter.writeControlMessage(MSG_SUBSCRIBE, buf);
 
     console.log(`[MoQT] SUBSCRIBE id=${requestId} track="${trackName}"`);
 
@@ -406,8 +412,7 @@ class MoqtPlayer {
               .varint(500)         // error_code
               .string('subscriber only') // reason
               .finish();
-            await this.controlWriter.varint(MSG_PUBLISH_ERROR);
-            await this.controlWriter.writeMessage(errBody);
+            await this.controlWriter.writeControlMessage(MSG_PUBLISH_ERROR, errBody);
             break;
           }
           case MSG_PUBLISH_DONE: {
@@ -425,8 +430,7 @@ class MoqtPlayer {
             console.log(`[MoQT] PUBLISH_NAMESPACE id=${pnReqId} ns="${parts.join('/')}" — sending OK`);
             // Respond with PUBLISH_NAMESPACE_OK (0x07)
             const okBody = new MsgBuilder().varint(pnReqId).finish();
-            await this.controlWriter.varint(MSG_PUBLISH_NAMESPACE_OK);
-            await this.controlWriter.writeMessage(okBody);
+            await this.controlWriter.writeControlMessage(MSG_PUBLISH_NAMESPACE_OK, okBody);
             break;
           }
           case MSG_MAX_REQUEST_ID: {
@@ -673,6 +677,7 @@ class MoqtPlayer {
       console.log(`[MoQT] Selected tracks: video=${selectedVideo?.name} audio=${selectedAudio?.name}`);
       this.onStatus(`Subscribing to ${selected.length} tracks...`);
 
+      // Subscribe sequentially to avoid interleaving writes on control stream
       for (const track of selected) {
         const type = track === selectedVideo ? 'video' : 'audio';
 
@@ -687,14 +692,15 @@ class MoqtPlayer {
           }
         }
 
-        // Subscribe to track — store type info
+        // Subscribe to track — must await to serialize control stream writes
         const priority = type === 'video' ? 128 : 64;
-        this._subscribe(track.name, priority).then(alias => {
+        try {
+          const alias = await this._subscribe(track.name, priority);
           const info = this.trackAliasMap.get(alias);
           if (info) info.type = type;
-        }).catch(e => {
+        } catch (e) {
           console.error(`[MoQT] Failed to subscribe to ${track.name}:`, e);
-        });
+        }
       }
 
       this.onStatus('Playing');
