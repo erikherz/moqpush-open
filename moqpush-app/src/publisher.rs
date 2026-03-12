@@ -354,7 +354,7 @@ impl Publisher {
                 let rebased_ms = ((bdt_val.saturating_sub(base)) * 1000) / timescale as u64;
                 let bdt_ms = (bdt_val * 1000) / timescale as u64;
                 let base_ms = (base * 1000) / timescale as u64;
-                info!("{} '{}': NEW_GROUP bdt={}ms base={}ms rebased={}ms",
+                debug!("{} '{}': NEW_GROUP bdt={}ms base={}ms rebased={}ms",
                     if track_type == TrackType::Video { "Video" } else { "Audio" },
                     track_name, bdt_ms, base_ms, rebased_ms);
             }
