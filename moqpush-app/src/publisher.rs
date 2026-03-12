@@ -52,7 +52,7 @@ pub struct Publisher {
     /// CMSF SAP-type event timeline track (one shared across all media tracks).
     sap_track: Option<TrackProducer>,
     sap_group: Option<GroupProducer>,
-    catalog_logged_once: bool,
+    catalog_last_logged: Option<std::time::Instant>,
     /// Shared time origin for synchronized A/V timestamp rebasing.
     time_origin: Option<SharedTimeOrigin>,
     /// Target latency in ms for MSF catalog (default 2000).
@@ -72,7 +72,7 @@ impl Publisher {
             audio_count: 0,
             sap_track: None,
             sap_group: None,
-            catalog_logged_once: false,
+            catalog_last_logged: None,
             time_origin: None,
             target_latency_ms: None,
             first_video_at: None,
@@ -259,9 +259,12 @@ impl Publisher {
             Ok(json) => {
                 let json_len = json.len();
                 // Log full catalog JSON once for debugging
-                if self.catalog_logged_once == false {
+                let should_log = self.catalog_last_logged
+                    .map(|t| t.elapsed().as_secs() >= 60)
+                    .unwrap_or(true);
+                if should_log {
                     info!("MSF catalog JSON: {}", json);
-                    self.catalog_logged_once = true;
+                    self.catalog_last_logged = Some(std::time::Instant::now());
                 }
                 match self.catalog.msf_track.append_group() {
                     Ok(mut group) => {
