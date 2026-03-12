@@ -105,17 +105,27 @@
       html += stat('Uptime', fmtUptime(d.uptime_secs));
 
       // Publisher stats
-      if (d.tracks_published != null) html += stat('Tracks', d.tracks_published);
+      if (d.tracks != null) html += stat('Tracks', d.tracks);
       if (d.bytes_published != null) html += stat('Published', fmtBytes(d.bytes_published));
+      if (d.frames_sent != null) html += stat('Frames', d.frames_sent.toLocaleString());
+      if (d.segments_sent != null) html += stat('Segments', d.segments_sent.toLocaleString());
+      if (d.video_width && d.video_height) html += stat('Resolution', d.video_width + 'x' + d.video_height);
+      if (d.video_codec != null && d.role === 'publisher') html += stat('Video Codec', d.video_codec);
+      if (d.audio_codec != null && d.role === 'publisher') html += stat('Audio Codec', d.audio_codec);
 
       // Player stats
       if (d.buffer_health != null) html += stat('Buffer', d.buffer_health.toFixed(2) + 's');
       if (d.latency != null) html += stat('Latency', d.latency.toFixed(2) + 's');
-      if (d.width != null && d.height != null) html += stat('Resolution', d.width + 'x' + d.height);
+      if (d.width != null && d.height != null && d.role !== 'publisher') html += stat('Resolution', d.width + 'x' + d.height);
       if (d.bitrate_mbps != null) html += stat('Bitrate', d.bitrate_mbps.toFixed(1) + ' Mbps');
-      if (d.video_codec != null) html += stat('Video Codec', d.video_codec);
-      if (d.audio_codec != null) html += stat('Audio Codec', d.audio_codec);
+      if (d.estimated_bandwidth != null && d.estimated_bandwidth > 0) html += stat('Est. BW', d.estimated_bandwidth.toFixed(1) + ' Mbps');
+      if (d.video_codec != null && d.role !== 'publisher') html += stat('Video Codec', d.video_codec);
+      if (d.audio_codec != null && d.role !== 'publisher') html += stat('Audio Codec', d.audio_codec);
       if (d.dropped_frames != null) html += stat('Dropped', d.dropped_frames, d.dropped_frames > 0 ? 'warn' : '');
+      if (d.load_latency != null && d.load_latency > 0) html += stat('Load Time', d.load_latency.toFixed(2) + 's');
+      if (d.buffering_time != null && d.buffering_time > 0) html += stat('Rebuffer', d.buffering_time.toFixed(1) + 's', d.buffering_time > 2 ? 'warn' : '');
+      if (d.play_time != null && d.play_time > 0) html += stat('Play Time', fmtUptime(d.play_time));
+      if (d.switch_count != null && d.switch_count > 0) html += stat('Switches', d.switch_count);
       if (d.relay != null) {
         const full = d.relay;
         const short = full.length > 15 ? full.slice(0, 15) + '…' : full;

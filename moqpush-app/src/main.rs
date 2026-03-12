@@ -13,7 +13,7 @@ mod http_ingest;
 mod mp4;
 mod publisher;
 
-use publisher::Publisher;
+use publisher::{Publisher, PublisherStats};
 
 /// Default Cloudflare MoQ relay
 const DEFAULT_RELAY: &str = "https://draft-14.cloudflare.mediaoverquic.com";
@@ -119,7 +119,9 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("failed to create broadcast for namespace '{}'", namespace))?;
     let catalog = CatalogProducer::new(&mut broadcast)
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
-    let mut publisher = Publisher::new(broadcast, catalog);
+    let pub_stats = PublisherStats::new();
+    let stats_ref = pub_stats.clone();
+    let mut publisher = Publisher::new(broadcast, catalog, pub_stats);
     if let Some(latency) = args.target_latency {
         publisher.set_target_latency_ms(latency);
     }
@@ -184,7 +186,7 @@ async fn main() -> Result<()> {
     let hb_ns = namespace.clone();
     let hb_instance = instance_id.clone();
     tokio::spawn(async move {
-        run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance).await;
+        run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance, stats_ref).await;
     });
 
     // Run until session closes or shutdown
@@ -344,7 +346,10 @@ async fn run_stats_loop(
     push_key: String,
     namespace: String,
     instance_id: String,
+    stats: Arc<PublisherStats>,
 ) {
+    use std::sync::atomic::Ordering::Relaxed;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -358,6 +363,8 @@ async fn run_stats_loop(
         tick += 1;
 
         let uptime = start_time.elapsed().as_secs();
+        let video_codec = stats.video_codec.lock().unwrap().clone();
+        let audio_codec = stats.audio_codec.lock().unwrap().clone();
 
         // Push stats every second
         let _ = client
@@ -367,6 +374,14 @@ async fn run_stats_loop(
                 "namespace": namespace,
                 "role": "publisher",
                 "uptime_secs": uptime,
+                "tracks": stats.track_count.load(Relaxed),
+                "bytes_published": stats.bytes_published.load(Relaxed),
+                "frames_sent": stats.frames_sent.load(Relaxed),
+                "segments_sent": stats.segments_sent.load(Relaxed),
+                "video_width": stats.video_width.load(Relaxed),
+                "video_height": stats.video_height.load(Relaxed),
+                "video_codec": if video_codec.is_empty() { None } else { Some(video_codec) },
+                "audio_codec": if audio_codec.is_empty() { None } else { Some(audio_codec) },
             }))
             .send()
             .await;

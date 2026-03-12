@@ -8,12 +8,41 @@ use anyhow::{anyhow, Result};
 use base64::Engine;
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use tracing::{debug, info};
 
 use moq_lite::{BroadcastProducer, Group, GroupProducer, Track, TrackProducer};
 use moq_mux::CatalogProducer;
 
 use crate::mp4;
+
+/// Shared publisher stats readable from the stats loop via Arc.
+pub struct PublisherStats {
+    pub bytes_published: AtomicU64,
+    pub frames_sent: AtomicU64,
+    pub segments_sent: AtomicU64,
+    pub track_count: AtomicU32,
+    pub video_width: AtomicU32,
+    pub video_height: AtomicU32,
+    pub video_codec: std::sync::Mutex<String>,
+    pub audio_codec: std::sync::Mutex<String>,
+}
+
+impl PublisherStats {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            bytes_published: AtomicU64::new(0),
+            frames_sent: AtomicU64::new(0),
+            segments_sent: AtomicU64::new(0),
+            track_count: AtomicU32::new(0),
+            video_width: AtomicU32::new(0),
+            video_height: AtomicU32::new(0),
+            video_codec: std::sync::Mutex::new(String::new()),
+            audio_codec: std::sync::Mutex::new(String::new()),
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackType {
@@ -59,10 +88,12 @@ pub struct Publisher {
     target_latency_ms: Option<u64>,
     /// When the first video track was registered (for audio-wait timeout).
     first_video_at: Option<std::time::Instant>,
+    /// Shared stats counters readable from the stats loop.
+    pub stats: Arc<PublisherStats>,
 }
 
 impl Publisher {
-    pub fn new(broadcast: BroadcastProducer, catalog: CatalogProducer) -> Self {
+    pub fn new(broadcast: BroadcastProducer, catalog: CatalogProducer, stats: Arc<PublisherStats>) -> Self {
         Self {
             broadcast,
             catalog,
@@ -76,6 +107,7 @@ impl Publisher {
             time_origin: None,
             target_latency_ms: None,
             first_video_at: None,
+            stats,
         }
     }
 
@@ -147,6 +179,11 @@ impl Publisher {
                 info!("Registered video track '{}' codec={} {}x{} timescale={} default_sample_duration={:?}",
                     name, codec_str, width, height, timescale, default_sample_duration);
 
+                // Update shared stats
+                self.stats.video_width.store(width, Ordering::Relaxed);
+                self.stats.video_height.store(height, Ordering::Relaxed);
+                *self.stats.video_codec.lock().unwrap() = codec_str.clone();
+
                 self.tracks.insert(name.clone(), TrackState {
                     track: track_producer,
                     timescale,
@@ -204,6 +241,9 @@ impl Publisher {
                 info!("Registered audio track '{}' codec={} sr={} ch={} timescale={} default_sample_duration={:?}",
                     name, codec_str, sample_rate, channels, timescale, default_sample_duration);
 
+                // Update shared stats
+                *self.stats.audio_codec.lock().unwrap() = codec_str.clone();
+
                 self.tracks.insert(name.clone(), TrackState {
                     track: track_producer,
                     timescale,
@@ -217,6 +257,8 @@ impl Publisher {
                 name
             }
         };
+
+        self.stats.track_count.store(self.tracks.len() as u32, Ordering::Relaxed);
 
         // Only publish catalog once we have both video and audio tracks.
         // Publishing an incomplete catalog (video-only) causes Shaka to set up
@@ -371,8 +413,11 @@ impl Publisher {
         };
 
         if let Some(ref mut group) = state.group {
+            let len = frame_data.len() as u64;
             group.write_frame(frame_data)
                 .map_err(|e| anyhow!("failed to write frame: {}", e))?;
+            self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
+            self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
         }
 
         // Emit CMSF SAP event for video fragments
@@ -418,6 +463,7 @@ impl Publisher {
     pub fn start_segment(&mut self, track_name: &str) {
         if let Some(state) = self.tracks.get_mut(track_name) {
             state.new_segment = true;
+            self.stats.segments_sent.fetch_add(1, Ordering::Relaxed);
         }
     }
 

@@ -195,6 +195,12 @@
               audio_codec: activeAudio?.audioCodec || null,
               relay: relayUrl.replace('https://', ''),
               uptime_secs: Math.floor((Date.now() - startTime) / 1000),
+              estimated_bandwidth: stats.estimatedBandwidth ? parseFloat((stats.estimatedBandwidth / 1e6).toFixed(2)) : 0,
+              load_latency: parseFloat((stats.loadLatency || 0).toFixed(3)),
+              buffering_time: parseFloat((stats.bufferingTime || 0).toFixed(2)),
+              play_time: parseFloat((stats.playTime || 0).toFixed(1)),
+              state_changes: stats.stateHistory?.length || 0,
+              switch_count: stats.switchHistory?.length || 0,
             }),
           }).catch(() => {});
         }, 1000);
