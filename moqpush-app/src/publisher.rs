@@ -234,10 +234,14 @@ impl Publisher {
     pub fn publish_msf_catalog(&mut self) {
         let cat = self.catalog.lock();
         let mut msf = moq_mux::msf::to_msf_with_namespace(&cat, None);
-        if let Some(latency) = self.target_latency_ms {
-            msf.target_latency = Some(latency);
-        }
         drop(cat);
+
+        // Set target latency at track level per MSF draft-00 §5.1.16
+        if let Some(latency) = self.target_latency_ms {
+            for track in &mut msf.tracks {
+                track.target_latency = Some(latency);
+            }
+        }
 
         let b64 = base64::engine::general_purpose::STANDARD;
         for track in &mut msf.tracks {
