@@ -218,7 +218,7 @@ async fn handle_request(
                     let is_idr = fragment_starts_with_idr(frag_data).unwrap_or(false);
                     let bdt = parse_base_decode_time(frag_data);
                     let elapsed_ms = segment_start.elapsed().as_millis();
-                    info!("FRAG {} track={} frag={} size={}B idr={} bdt={:?} elapsed={}ms",
+                    debug!("FRAG {} track={} frag={} size={}B idr={} bdt={:?} elapsed={}ms",
                         path, tn, fragments_sent, frag_data.len(), is_idr, bdt, elapsed_ms);
                     if let Err(e) = publisher.send_fragment(tn, frag_data) {
                         warn!("Failed to send fragment: {}", e);
@@ -257,7 +257,7 @@ async fn handle_request(
         }
     } else if is_media && fragments_sent > 0 {
         let seg_duration_ms = segment_start.elapsed().as_millis();
-        info!("SEGMENT_END {} track={} frags={} duration={}ms",
+        debug!("SEGMENT_END {} track={} frags={} duration={}ms",
             path, track_name.as_deref().unwrap_or("?"), fragments_sent, seg_duration_ms);
     } else if !is_init && !is_media && !buf.is_empty() {
         // Fallback: full-body detection
