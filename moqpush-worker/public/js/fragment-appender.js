@@ -123,6 +123,7 @@ class FragmentAppender {
     this.codecs = { video: null, audio: null };
     this.initialized = false;
     this.errored = false;
+    this.onAppend = null; // callback(type, data, isInit) — fires when appendBuffer() is actually called
 
     this._openPromise = new Promise(resolve => {
       this.mediaSource.addEventListener('sourceopen', resolve, { once: true });
@@ -219,6 +220,7 @@ class FragmentAppender {
 
     const data = queue.shift();
     try {
+      if (this.onAppend) this.onAppend(type, data);
       sb.appendBuffer(data);
     } catch (e) {
       console.error(`[MSE] appendBuffer error (${type}):`, e.name, e.message);

@@ -63,8 +63,8 @@
   <!-- Shaka Player (loaded for default mode) -->
   <script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
   <!-- Custom player scripts (loaded for ?custom-player=true) -->
-  <script src="/js/fragment-appender.js?v=11"></script>
-  <script src="/js/moqt-player.js?v=11"></script>
+  <script src="/js/fragment-appender.js?v=13"></script>
+  <script src="/js/moqt-player.js?v=13"></script>
 
   <script>
     const namespace = window.location.pathname.replace(/^\//, '').replace(/\/$/, '');
@@ -196,9 +196,12 @@
             ${tRow('Catalog Data', t.catalogMs)}
             ${tRow('Media SUBs', t.subscribeMs)}
             ${tRow('1st Fragment', t.firstFragmentMs)}
+            ${tRow('Vid Appended', t.videoAppendMs)}
             ${tRow('1st Decoded', t.firstDecodedMs)}
             ${tRow('1st Blit', t.firstBlitMs)}
-            ${t.firstFragmentMs != null && t.firstDecodedMs != null ? tRow('Frag→Decode', t.firstDecodedMs - t.firstFragmentMs) : ''}
+            ${t.firstFragmentMs != null && t.videoAppendMs != null ? tRow('Frag→Append', t.videoAppendMs - t.firstFragmentMs) : ''}
+            ${t.videoAppendMs != null && t.firstDecodedMs != null ? tRow('Append→Decode', t.firstDecodedMs - t.videoAppendMs) : ''}
+            ${t.appendsBeforeDecode ? row('Appends→1st Dec', t.appendsBeforeDecode) : ''}
           `;
         }, 500);
 

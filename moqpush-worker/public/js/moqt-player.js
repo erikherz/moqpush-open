@@ -293,6 +293,19 @@ class MoqtPlayer {
     this.appender.mediaSource.addEventListener('sourceopen', () => {
       if (!this.timing.mseOpen) this.timing.mseOpen = performance.now();
     }, { once: true });
+    // Track every video appendBuffer() call until first decode
+    this._videoAppends = [];
+    this.appender.onAppend = (type, data) => {
+      if (type === 'video' && !this.timing.firstFrameDecoded) {
+        const now = performance.now();
+        const isInit = window.hasMoov(data);
+        this._videoAppends.push({ t: now, bytes: data.byteLength, isInit });
+        if (!isInit && !this.timing.firstVideoAppend) {
+          this.timing.firstVideoAppend = now;
+        }
+        console.log(`[MoQT] Video appendBuffer #${this._videoAppends.length}: ${data.byteLength}B ${isInit ? '(init)' : '(moof)'} at ${(now - this.timing.connectStart).toFixed(0)}ms`);
+      }
+    };
     this.video.addEventListener('loadeddata', () => {
       if (!this.timing.firstFrameDecoded) {
         this.timing.firstFrameDecoded = performance.now();
@@ -844,6 +857,7 @@ class MoqtPlayer {
       fmt('Media SUBs done',   t.subscribeDone),
       fmt('First media frame', t.firstMediaFrame),
       fmt('First fragment',    t.firstFragment),
+      fmt('Video appended',    t.firstVideoAppend),
       t.firstFragment ? `  (${t.firstFragmentType})` : null,
       fmt('First decoded',     t.firstFrameDecoded),
       fmt('First blit',        t.firstBlit),
@@ -854,6 +868,7 @@ class MoqtPlayer {
       delta('  Subscribe→Fragment',  t.subscribeDone, t.firstFragment),
       delta('  Fragment→Decoded',    t.firstFragment, t.firstFrameDecoded),
       delta('  Decoded→Blit',        t.firstFrameDecoded, t.firstBlit),
+      `  Video appends before decode: ${this._videoAppends.length}`,
     ].filter(Boolean);
     console.log(`[MoQT] ⏱ Pipeline timing:\n  ${lines.join('\n  ')}`);
   }
@@ -872,6 +887,8 @@ class MoqtPlayer {
       subscribeMs:     rel(t.subscribeDone),
       firstMediaMs:    rel(t.firstMediaFrame),
       firstFragmentMs: rel(t.firstFragment),
+      videoAppendMs:   rel(t.firstVideoAppend),
+      appendsBeforeDecode: this._videoAppends.length,
       firstDecodedMs:  rel(t.firstFrameDecoded),
       firstBlitMs:     rel(t.firstBlit),
     };

@@ -588,13 +588,16 @@ pub fn rebase_decode_time(fragment: &[u8], base: u64) -> Vec<u8> {
 
     // Find traf within moof
     let moof_content_start = moof_off + 8;
-    let moof_end = moof_off + moof_size;
+    let moof_end = std::cmp::min(moof_off + moof_size, out.len());
+    if moof_end <= moof_content_start {
+        return out;
+    }
     let mut j = moof_content_start;
     while j + 8 <= moof_end {
         let bsize = u32::from_be_bytes([out[j], out[j+1], out[j+2], out[j+3]]) as usize;
         if bsize < 8 { break; }
         if &out[j+4..j+8] == b"traf" {
-            let traf_end = j + bsize;
+            let traf_end = std::cmp::min(j + bsize, out.len());
             // Find tfdt within traf
             let mut k = j + 8;
             while k + 8 <= traf_end {
@@ -655,7 +658,12 @@ pub fn inject_trun_duration(fragment: &[u8], default_duration: u32) -> Vec<u8> {
         None => return fragment.to_vec(),
     };
 
-    let moof_content = &fragment[moof_off+8..moof_off+moof_size];
+    // Clamp moof_size to fragment bounds
+    let moof_end = std::cmp::min(moof_off + moof_size, fragment.len());
+    if moof_end <= moof_off + 8 {
+        return fragment.to_vec();
+    }
+    let moof_content = &fragment[moof_off+8..moof_end];
     let mut j = 0;
     while j + 8 <= moof_content.len() {
         let bsize = u32::from_be_bytes([moof_content[j], moof_content[j+1], moof_content[j+2], moof_content[j+3]]) as usize;
@@ -663,7 +671,10 @@ pub fn inject_trun_duration(fragment: &[u8], default_duration: u32) -> Vec<u8> {
         if &moof_content[j+4..j+8] == b"traf" {
             let traf_abs = moof_off + 8 + j;
             let traf_content_start = traf_abs + 8;
-            let traf_end = traf_abs + bsize;
+            let traf_end = std::cmp::min(traf_abs + bsize, fragment.len());
+            if traf_end <= traf_content_start {
+                break;
+            }
             let traf_content = &fragment[traf_content_start..traf_end];
             let mut k = 0;
             while k + 8 <= traf_content.len() {
@@ -688,7 +699,9 @@ fn rewrite_trun_in_fragment(
     trun_off: usize, trun_size: usize,
     default_duration: u32,
 ) -> Vec<u8> {
-    let trun_content = &fragment[trun_off+8..trun_off+trun_size];
+    let trun_end = std::cmp::min(trun_off + trun_size, fragment.len());
+    if trun_end <= trun_off + 8 { return fragment.to_vec(); }
+    let trun_content = &fragment[trun_off+8..trun_end];
     if trun_content.len() < 4 { return fragment.to_vec(); }
 
     let flags = u32::from_be_bytes([0, trun_content[1], trun_content[2], trun_content[3]]);
