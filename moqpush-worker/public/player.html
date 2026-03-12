@@ -25,6 +25,7 @@
     .stats-val { color: #fff; }
     .error { color: #e74c3c; }
     .namespace-label { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 4px 10px; border-radius: 4px; font-size: 0.85em; z-index: 5; }
+    .player-mode { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 4px 10px; border-radius: 4px; font-size: 0.75em; z-index: 6; margin-top: 28px; color: #7ee787; }
     .console-toggle { width: 100%; background: #111; border: none; color: #666; font-size: 12px; padding: 6px 0; cursor: pointer; font-family: -apple-system, BlinkMacSystemFont, sans-serif; border-top: 1px solid #222; }
     .console-toggle:hover { color: #aaa; background: #1a1a1a; }
     .console-toggle .arrow { display: inline-block; transition: transform 0.2s; margin-right: 6px; }
@@ -38,6 +39,7 @@
 <body>
   <div class="player-container">
     <div class="namespace-label" id="ns-label"></div>
+    <div class="player-mode" id="player-mode"></div>
     <div id="video-container" class="shaka-video-container">
       <video id="video" autoplay muted playsinline controls></video>
     </div>
@@ -58,7 +60,12 @@
     </div>
   </div>
 
+  <!-- Shaka Player (loaded for default mode) -->
   <script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
+  <!-- Custom player scripts (loaded for ?custom-player=true) -->
+  <script src="/js/fragment-appender.js"></script>
+  <script src="/js/moqt-player.js"></script>
+
   <script>
     const namespace = window.location.pathname.replace(/^\//, '').replace(/\/$/, '');
     document.getElementById('ns-label').textContent = namespace;
@@ -70,6 +77,7 @@
     const statusTitle = document.getElementById('status-title');
     const statusDetail = document.getElementById('status-detail');
     const statsEl = document.getElementById('stats');
+    const urlParams = new URLSearchParams(window.location.search);
 
     // Toggle stats with 'I' key
     document.addEventListener('keydown', (e) => {
@@ -85,7 +93,133 @@
     let playerStatsInterval = null;
     let startTime = Date.now();
 
-    async function loadPlayer() {
+    const useCustomPlayer = urlParams.get('custom-player') === 'true';
+    document.getElementById('player-mode').textContent = useCustomPlayer ? 'Custom MoQT + MSE' : 'Shaka Player';
+
+    // ── Route to correct player ─────────────────────────────────────
+    if (useCustomPlayer) {
+      loadCustomPlayer();
+    } else {
+      loadShakaPlayer();
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // Custom MoQT Player (direct MSE injection, sub-second latency)
+    // ═════════════════════════════════════════════════════════════════
+
+    async function loadCustomPlayer() {
+      try {
+        statusTitle.textContent = 'Looking up broadcast...';
+        const dirResp = await fetch(`/api/broadcasts/${namespace}`);
+
+        if (!dirResp.ok) {
+          statusTitle.textContent = 'Broadcast not found';
+          statusDetail.textContent = 'This namespace is not currently live';
+          statusTitle.classList.add('error');
+          return;
+        }
+
+        const dirData = await dirResp.json();
+        relayUrl = dirData.relay_url;
+
+        // Override relay from query param
+        const relayOverride = urlParams.get('relay');
+        if (relayOverride) {
+          relayUrl = relayOverride.startsWith('https://') ? relayOverride : `https://${relayOverride}`;
+        }
+
+        if (!window.WebTransport) {
+          statusTitle.textContent = 'Browser not supported';
+          statusDetail.textContent = 'WebTransport API required for custom player';
+          statusTitle.classList.add('error');
+          return;
+        }
+
+        statusDetail.textContent = `${relayUrl} / ${namespace}`;
+
+        // Clean relay URL (add trailing slash)
+        const connectUrl = `${relayUrl.replace(/\/+$/, '')}/`;
+        let catalogJson = null;
+
+        const player = new window.MoqtPlayer(video, connectUrl, namespace, {
+          onStatus: (msg) => {
+            statusTitle.textContent = msg;
+            if (msg === 'Playing') {
+              overlay.classList.add('hidden');
+              startTime = Date.now();
+            }
+          },
+          onCatalog: (catalog) => {
+            catalogJson = catalog;
+            const content = document.getElementById('console-content');
+            // Strip initData for display
+            const displayCatalog = JSON.parse(JSON.stringify(catalog));
+            if (displayCatalog.tracks) {
+              for (const t of displayCatalog.tracks) { delete t.initData; }
+            }
+            content.innerHTML = `<span class="console-label">MSF Catalog (${(catalog.tracks || []).length} tracks) [Custom Player]</span>${escapeHtml(JSON.stringify(displayCatalog, null, 2))}`;
+          },
+        });
+
+        currentPlayer = player;
+        await player.connect();
+
+        // Stats overlay update loop
+        statsInterval = setInterval(() => {
+          if (!statsEl.classList.contains('visible')) return;
+          const s = player.getStats();
+          const uptime = ((Date.now() - startTime) / 1000).toFixed(0);
+          const row = (label, val) => `<div class="stats-row"><span class="stats-label">${label}</span><span class="stats-val">${val}</span></div>`;
+
+          statsEl.innerHTML = `
+            <div class="stats-title">Custom MoQT Player</div>
+            ${row('Protocol', 'MoQ Transport / WebTransport')}
+            ${row('Relay', relayUrl.replace('https://', ''))}
+            ${row('Namespace', namespace)}
+            ${row('', '')}
+            ${row('Video', `${s.width}x${s.height}`)}
+            ${row('Buffer Health', `${s.bufferHealth}s`)}
+            ${row('Frames Received', s.framesReceived)}
+            ${row('Data Received', `${(s.bytesReceived / 1024 / 1024).toFixed(1)} MB`)}
+            ${row('Session', `${uptime}s`)}
+            ${row('Player', 'Custom MoQT + MSE')}
+          `;
+        }, 500);
+
+        // Push player stats to worker every 1s
+        playerStatsInterval = setInterval(() => {
+          const s = player.getStats();
+          fetch('/api/player-stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              namespace,
+              buffer_health: parseFloat(s.bufferHealth),
+              width: s.width || 0,
+              height: s.height || 0,
+              dropped_frames: 0,
+              relay: relayUrl.replace('https://', ''),
+              uptime_secs: s.uptime,
+              custom_player: true,
+              frames_received: s.framesReceived,
+              bytes_received: s.bytesReceived,
+            }),
+          }).catch(() => {});
+        }, 1000);
+
+      } catch (err) {
+        console.error('Custom player error:', err);
+        statusTitle.textContent = 'Connection failed';
+        statusDetail.textContent = err.message || String(err);
+        statusTitle.classList.add('error');
+      }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // Shaka Player (default, buffered playback)
+    // ═════════════════════════════════════════════════════════════════
+
+    async function loadShakaPlayer() {
       try {
         statusTitle.textContent = 'Looking up broadcast...';
         const dirResp = await fetch(`/api/broadcasts/${namespace}`);
@@ -116,7 +250,6 @@
         }
 
         // Override relay from query param
-        const urlParams = new URLSearchParams(window.location.search);
         const relayOverride = urlParams.get('relay');
         if (relayOverride) {
           relayUrl = relayOverride.startsWith('https://') ? relayOverride : `https://${relayOverride}`;
@@ -156,7 +289,7 @@
           overlay.classList.remove('hidden');
         });
 
-        // Connect to Cloudflare relay — clean path (they already have the content)
+        // Connect to Cloudflare relay
         const connectUrl = `${relayUrl.replace(/\/+$/, '')}/`;
         await player.load(connectUrl, undefined, 'application/msf');
         overlay.classList.add('hidden');
@@ -301,8 +434,6 @@
     function escapeHtml(s) {
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
-
-    loadPlayer();
   </script>
 </body>
 </html>
