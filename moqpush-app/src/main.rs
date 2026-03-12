@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
     let pub_stats = PublisherStats::new();
     let stats_ref = pub_stats.clone();
-    let mut publisher = Publisher::new(broadcast, catalog, pub_stats);
+    let mut publisher = Publisher::new(broadcast, catalog, pub_stats.clone());
     if let Some(latency) = args.target_latency {
         publisher.set_target_latency_ms(latency);
     }
@@ -189,16 +189,24 @@ async fn main() -> Result<()> {
         run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance, stats_ref).await;
     });
 
-    // Run until session closes or shutdown
-    tokio::select! {
-        result = session.closed() => {
-            match result {
-                Ok(()) => info!("Relay session closed normally"),
-                Err(e) => warn!("Relay session closed with error: {}", e),
+    // Run until session closes or shutdown, polling transport stats every second
+    let mut transport_interval = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            result = session.closed() => {
+                match result {
+                    Ok(()) => info!("Relay session closed normally"),
+                    Err(e) => warn!("Relay session closed with error: {}", e),
+                }
+                break;
             }
-        }
-        _ = shutdown_rx.changed() => {
-            info!("Shutdown signal received");
+            _ = shutdown_rx.changed() => {
+                info!("Shutdown signal received");
+                break;
+            }
+            _ = transport_interval.tick() => {
+                *pub_stats.transport.lock().unwrap() = Some(session.stats());
+            }
         }
     }
 
@@ -366,6 +374,19 @@ async fn run_stats_loop(
         let video_codec = stats.video_codec.lock().unwrap().clone();
         let audio_codec = stats.audio_codec.lock().unwrap().clone();
         let catalog = stats.catalog_json.lock().unwrap().clone();
+        let transport = stats.transport.lock().unwrap().clone();
+
+        // Build transport stats JSON
+        let transport_json = transport.map(|t| serde_json::json!({
+            "rtt_ms": t.rtt.map(|d| d.as_secs_f64() * 1000.0),
+            "bytes_sent": t.bytes_sent,
+            "bytes_received": t.bytes_received,
+            "bytes_lost": t.bytes_lost,
+            "packets_sent": t.packets_sent,
+            "packets_received": t.packets_received,
+            "packets_lost": t.packets_lost,
+            "estimated_send_rate_mbps": t.estimated_send_rate.map(|r| r as f64 / 1e6),
+        }));
 
         // Push stats every second
         let _ = client
@@ -384,6 +405,7 @@ async fn run_stats_loop(
                 "video_codec": if video_codec.is_empty() { None } else { Some(video_codec) },
                 "audio_codec": if audio_codec.is_empty() { None } else { Some(audio_codec) },
                 "catalog": catalog,
+                "transport": transport_json,
             }))
             .send()
             .await;

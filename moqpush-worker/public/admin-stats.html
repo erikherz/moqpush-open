@@ -117,6 +117,18 @@
       if (d.video_codec != null && d.role === 'publisher') html += stat('Video Codec', d.video_codec);
       if (d.audio_codec != null && d.role === 'publisher') html += stat('Audio Codec', d.audio_codec);
 
+      // Transport stats (QUIC/WebTransport)
+      if (d.transport) {
+        const t = d.transport;
+        if (t.rtt_ms != null) html += stat('RTT', t.rtt_ms.toFixed(1) + ' ms', t.rtt_ms > 100 ? 'warn' : 'good');
+        if (t.bytes_sent != null) html += stat('TX', fmtBytes(t.bytes_sent));
+        if (t.bytes_received != null) html += stat('RX', fmtBytes(t.bytes_received));
+        if (t.packets_lost != null) html += stat('Pkt Loss', t.packets_lost.toLocaleString(), t.packets_lost > 0 ? 'warn' : '');
+        if (t.bytes_lost != null && t.bytes_lost > 0) html += stat('Bytes Lost', fmtBytes(t.bytes_lost), 'warn');
+        if (t.packets_sent != null) html += stat('Pkts Sent', t.packets_sent.toLocaleString());
+        if (t.estimated_send_rate_mbps != null) html += stat('Send Rate', t.estimated_send_rate_mbps.toFixed(1) + ' Mbps');
+      }
+
       // Player stats
       if (d.buffer_health != null) html += stat('Buffer', d.buffer_health.toFixed(2) + 's');
       if (d.latency != null) html += stat('Latency', d.latency.toFixed(2) + 's');
@@ -138,18 +150,28 @@
 
       html += '</div>';
 
-      // Show Shaka player config
+      // Show Shaka player config (preserved open state across updates)
       if (d.shaka_config) {
-        const cfgId = 'cfg-' + Math.random().toString(36).slice(2, 8);
+        const cfgId = 'cfg-' + (d.namespace || label).replace(/\W/g, '');
+        const wasOpen = document.getElementById(cfgId)?.classList.contains('open');
         html += `<div class="catalog-toggle" onclick="document.getElementById('${cfgId}').classList.toggle('open')">Shaka Config</div>`;
-        html += `<pre class="catalog-pre" id="${cfgId}">${JSON.stringify(d.shaka_config, null, 2)}</pre>`;
+        html += `<pre class="catalog-pre ${wasOpen ? 'open' : ''}" id="${cfgId}">${JSON.stringify(d.shaka_config, null, 2)}</pre>`;
       }
 
-      // Show catalog JSON for publisher
+      // Show catalog JSON for publisher (preserved open state across updates)
       if (d.catalog) {
-        const catId = 'cat-' + Math.random().toString(36).slice(2, 8);
+        const catId = 'cat-' + (d.namespace || label).replace(/\W/g, '');
+        const wasOpen = document.getElementById(catId)?.classList.contains('open');
         html += `<div class="catalog-toggle" onclick="document.getElementById('${catId}').classList.toggle('open')">MSF Catalog</div>`;
-        html += `<pre class="catalog-pre" id="${catId}">${JSON.stringify(d.catalog, null, 2)}</pre>`;
+        html += `<pre class="catalog-pre ${wasOpen ? 'open' : ''}" id="${catId}">${JSON.stringify(d.catalog, null, 2)}</pre>`;
+      }
+
+      // Show transport stats JSON (preserved open state across updates)
+      if (d.transport) {
+        const trId = 'tr-' + (d.namespace || label).replace(/\W/g, '');
+        const wasOpen = document.getElementById(trId)?.classList.contains('open');
+        html += `<div class="catalog-toggle" onclick="document.getElementById('${trId}').classList.toggle('open')">Transport (QUIC)</div>`;
+        html += `<pre class="catalog-pre ${wasOpen ? 'open' : ''}" id="${trId}">${JSON.stringify(d.transport, null, 2)}</pre>`;
       }
 
       if (d.updated_at) {
