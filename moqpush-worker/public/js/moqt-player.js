@@ -285,7 +285,7 @@ class MoqtPlayer {
 
     // 5. Subscribe to catalog
     this.onStatus('Subscribing to catalog...');
-    await this._subscribe('.catalog', 128);
+    await this._subscribe('catalog', 128);
 
     // 6. Buffer trimming loop
     this._trimLoop();
@@ -596,7 +596,7 @@ class MoqtPlayer {
     const name = trackInfo.name;
 
     // Catalog track
-    if (name === '.catalog') {
+    if (name === 'catalog') {
       this._onCatalog(payload);
       return;
     }
