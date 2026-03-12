@@ -228,6 +228,7 @@ const PARAM_MAX_REQUEST_ID  = 2;
 const PARAM_IMPLEMENTATION  = 7;
 
 const GROUP_ORDER_DESCENDING = 0x02;
+const FILTER_LATEST_GROUP    = 0x01;
 const FILTER_LARGEST_OBJECT  = 0x02;
 const GROUP_END_STATUS       = 0x03;
 
@@ -248,6 +249,7 @@ class MoqtPlayer {
     this.namespace = namespace;
     this.onStatus = opts.onStatus || (() => {});
     this.onCatalog = opts.onCatalog || (() => {});
+    this.startFilter = opts.startFilter === 'latest_group' ? FILTER_LATEST_GROUP : FILTER_LARGEST_OBJECT;
 
     this.appender = new window.FragmentAppender();
     this.trackAliasMap = new Map();   // trackAlias → { name, type:'video'|'audio' }
@@ -258,9 +260,16 @@ class MoqtPlayer {
     this.controlReader = null;
     this.catalogReceived = false;
     this.stats = { framesReceived: 0, bytesReceived: 0, startTime: 0 };
+    this._playTriggered = false;
+    this._initialSeekDone = false;
+
+    // Pipeline timing instrumentation
+    this.timing = {};
   }
 
+
   async connect() {
+    this.timing.connectStart = performance.now();
     this.onStatus('Connecting WebTransport...');
 
     // 1. Connect WebTransport
@@ -270,6 +279,7 @@ class MoqtPlayer {
       protocols: ['moq-lite-03', 'moql', 'moqt-16', 'moqt-15'],
     });
     await this.wt.ready;
+    this.timing.connectDone = performance.now();
     console.log('[MoQT] WebTransport connected, protocol:', this.wt.protocol ?? '(none)');
     this.wt.closed.then(info => {
       console.log('[MoQT] WebTransport closed:', info);
@@ -277,9 +287,26 @@ class MoqtPlayer {
       console.error('[MoQT] WebTransport closed with error:', e);
     });
 
-    // 2. Attach MSE to video element
+    // 2. Attach MSE to video element + listen for decode/render events
     this.video.src = this.appender.getObjectURL();
     this.stats.startTime = Date.now();
+    this.appender.mediaSource.addEventListener('sourceopen', () => {
+      if (!this.timing.mseOpen) this.timing.mseOpen = performance.now();
+    }, { once: true });
+    this.video.addEventListener('loadeddata', () => {
+      if (!this.timing.firstFrameDecoded) {
+        this.timing.firstFrameDecoded = performance.now();
+        this._logTiming();
+      }
+    }, { once: true });
+    this.video.addEventListener('playing', () => {
+      if (!this.timing.firstBlit) {
+        this.timing.firstBlit = performance.now();
+        this._logTiming();
+        // Aggressive initial seek — snap to live edge once playback starts
+        setTimeout(() => this._initialSeek(), 100);
+      }
+    }, { once: true });
 
     // 3. SETUP exchange
     this.onStatus('MoQT SETUP...');
@@ -287,6 +314,7 @@ class MoqtPlayer {
     this.controlWriter = new MoqWriter(bidi.writable);
     this.controlReader = new MoqReader(bidi.readable);
     await this._doSetup();
+    this.timing.setupDone = performance.now();
 
     // 4. Start background loops
     this._readControlLoop();
@@ -294,7 +322,9 @@ class MoqtPlayer {
 
     // 5. Subscribe to catalog
     this.onStatus('Subscribing to catalog...');
+    this.timing.catalogSubSent = performance.now();
     await this._subscribe('catalog', 128);
+    this.timing.catalogSubOk = performance.now();
 
     // 6. Buffer trimming loop
     this._trimLoop();
@@ -365,7 +395,7 @@ class MoqtPlayer {
     body.u8(priority);                       // subscriber_priority
     body.u8(GROUP_ORDER_DESCENDING);         // group_order = descending
     body.bool(true);                         // forward = true
-    body.varint(FILTER_LARGEST_OBJECT);      // filter type = LargestObject
+    body.varint(this.startFilter);            // filter type
     body.varint(0);                          // num_parameters = 0
 
     const buf = body.finish();
@@ -617,6 +647,11 @@ class MoqtPlayer {
       return;
     }
 
+    // First media frame timing
+    if (!this.timing.firstMediaFrame) {
+      this.timing.firstMediaFrame = performance.now();
+    }
+
     // Determine media type from track name
     const type = trackInfo.type || (name.startsWith('video') ? 'video' : 'audio');
 
@@ -625,7 +660,13 @@ class MoqtPlayer {
       console.log(`[MoQT] Init segment: ${name} (${payload.byteLength}B) group=${groupId}`);
       this.appender.setInitSegment(type, payload);
     } else if (window.hasMoof(payload)) {
+      if (!this.timing.firstFragment) {
+        this.timing.firstFragment = performance.now();
+        this.timing.firstFragmentType = type;
+      }
       this.appender.append(type, payload);
+      // Trigger play immediately on first media append
+      this._triggerPlay();
     } else {
       // Could be ftyp+moov or combined — try setting as init
       console.debug(`[MoQT] Unknown payload type: ${name} (${payload.byteLength}B)`);
@@ -643,6 +684,9 @@ class MoqtPlayer {
 
   async _onCatalog(payload) {
     try {
+      if (!this.timing.catalogReceived) {
+        this.timing.catalogReceived = performance.now();
+      }
       const text = new TextDecoder().decode(payload);
       const catalog = JSON.parse(text);
       console.log('[MoQT] Catalog received:', catalog);
@@ -669,19 +713,23 @@ class MoqtPlayer {
         }
       }
 
-      // Pick highest quality video (last = highest bitrate/profile) and first audio
-      const selectedVideo = videoTracks.length > 0 ? videoTracks[videoTracks.length - 1] : null;
+      // Pick highest resolution video track
+      const selectedVideo = videoTracks.length > 0
+        ? videoTracks.reduce((best, t) => {
+            const res = (t.width || 0) * (t.height || 0);
+            const bestRes = (best.width || 0) * (best.height || 0);
+            return res > bestRes ? t : best;
+          })
+        : null;
       const selectedAudio = audioTracks.length > 0 ? audioTracks[0] : null;
       const selected = [selectedVideo, selectedAudio].filter(Boolean);
 
       console.log(`[MoQT] Selected tracks: video=${selectedVideo?.name} audio=${selectedAudio?.name}`);
       this.onStatus(`Subscribing to ${selected.length} tracks...`);
 
-      // Subscribe sequentially to avoid interleaving writes on control stream
+      // Extract init data from catalog before subscribing
       for (const track of selected) {
         const type = track === selectedVideo ? 'video' : 'audio';
-
-        // Extract init data from catalog if available
         if (track.initData) {
           try {
             const initBytes = this._base64ToUint8Array(track.initData);
@@ -691,8 +739,12 @@ class MoqtPlayer {
             console.warn(`[MoQT] Failed to decode initData for ${track.name}:`, e);
           }
         }
+      }
 
-        // Subscribe to track — must await to serialize control stream writes
+      // Subscribe to video and audio in parallel — atomic writer prevents interleaved bytes
+      this.timing.subscribeStart = performance.now();
+      await Promise.all(selected.map(async (track) => {
+        const type = track === selectedVideo ? 'video' : 'audio';
         const priority = type === 'video' ? 128 : 64;
         try {
           const alias = await this._subscribe(track.name, priority);
@@ -701,7 +753,8 @@ class MoqtPlayer {
         } catch (e) {
           console.error(`[MoQT] Failed to subscribe to ${track.name}:`, e);
         }
-      }
+      }));
+      this.timing.subscribeDone = performance.now();
 
       this.onStatus('Playing');
     } catch (e) {
@@ -725,10 +778,9 @@ class MoqtPlayer {
       if (this.video.currentTime > 0) {
         this.appender.trimBuffer(this.video.currentTime, 3);
       }
-      // Auto-seek to live edge if behind
-      const b = this.video.buffered;
-      if (b.length > 0) {
-        const edge = b.end(b.length - 1);
+      // Seek to live edge if we fall too far behind.
+      const edge = this._getLiveEdge();
+      if (edge > 0) {
         const behind = edge - this.video.currentTime;
         if (behind > 2.0 && !this.video.paused) {
           console.log(`[MoQT] Seeking to live edge (behind ${behind.toFixed(1)}s)`);
@@ -736,6 +788,93 @@ class MoqtPlayer {
         }
       }
     }, 1000);
+  }
+
+  /** Get the live edge — use video buffer (what's actually decodable),
+   *  fall back to audio if video hasn't arrived yet. */
+  _getLiveEdge() {
+    const videoSb = this.appender.sourceBuffers.video;
+    if (videoSb && videoSb.buffered.length > 0) {
+      return videoSb.buffered.end(videoSb.buffered.length - 1);
+    }
+    // Fallback to audio only when video has no data yet
+    const audioSb = this.appender.sourceBuffers.audio;
+    if (audioSb && audioSb.buffered.length > 0) {
+      return audioSb.buffered.end(audioSb.buffered.length - 1);
+    }
+    const b = this.video.buffered;
+    return b.length > 0 ? b.end(b.length - 1) : 0;
+  }
+
+  // ── Play trigger ──────────────────────────────────────────────────
+
+  _triggerPlay() {
+    if (this._playTriggered) return;
+    this._playTriggered = true;
+    this.video.play().catch(e => {
+      console.warn('[MoQT] play() rejected:', e.message);
+    });
+  }
+
+  _initialSeek() {
+    if (this._initialSeekDone) return;
+    this._initialSeekDone = true;
+    const edge = this._getLiveEdge();
+    if (edge > 0.15) {
+      const target = edge - 0.05; // 50ms behind live edge
+      console.log(`[MoQT] Initial seek: edge=${edge.toFixed(3)}s → ${target.toFixed(3)}s`);
+      this.video.currentTime = target;
+    }
+  }
+
+  // ── Timing ───────────────────────────────────────────────────────
+
+  _logTiming() {
+    const t = this.timing;
+    const t0 = t.connectStart || 0;
+    const fmt = (label, ts) => ts ? `${label}: ${(ts - t0).toFixed(0)}ms` : null;
+    const delta = (label, from, to) => (from && to) ? `${label}: +${(to - from).toFixed(0)}ms` : null;
+    const lines = [
+      fmt('QUIC connect',      t.connectDone),
+      fmt('MSE sourceopen',    t.mseOpen),
+      fmt('SETUP done',        t.setupDone),
+      fmt('Catalog SUB sent',  t.catalogSubSent),
+      fmt('Catalog SUB_OK',    t.catalogSubOk),
+      fmt('Catalog data',      t.catalogReceived),
+      fmt('Media SUBs done',   t.subscribeDone),
+      fmt('First media frame', t.firstMediaFrame),
+      fmt('First fragment',    t.firstFragment),
+      t.firstFragment ? `  (${t.firstFragmentType})` : null,
+      fmt('First decoded',     t.firstFrameDecoded),
+      fmt('First blit',        t.firstBlit),
+      '',
+      delta('  Connect→SETUP',      t.connectDone, t.setupDone),
+      delta('  SETUP→Catalog data',  t.setupDone, t.catalogReceived),
+      delta('  Catalog→Subscribes', t.catalogReceived, t.subscribeDone),
+      delta('  Subscribe→Fragment',  t.subscribeDone, t.firstFragment),
+      delta('  Fragment→Decoded',    t.firstFragment, t.firstFrameDecoded),
+      delta('  Decoded→Blit',        t.firstFrameDecoded, t.firstBlit),
+    ].filter(Boolean);
+    console.log(`[MoQT] ⏱ Pipeline timing:\n  ${lines.join('\n  ')}`);
+  }
+
+  getTiming() {
+    const t = this.timing;
+    const t0 = t.connectStart || 0;
+    const rel = (ts) => ts ? Math.round(ts - t0) : null;
+    return {
+      connectMs:       rel(t.connectDone),
+      mseOpenMs:       rel(t.mseOpen),
+      setupMs:         rel(t.setupDone),
+      catalogSubMs:    rel(t.catalogSubSent),
+      catalogOkMs:     rel(t.catalogSubOk),
+      catalogMs:       rel(t.catalogReceived),
+      subscribeMs:     rel(t.subscribeDone),
+      firstMediaMs:    rel(t.firstMediaFrame),
+      firstFragmentMs: rel(t.firstFragment),
+      firstDecodedMs:  rel(t.firstFrameDecoded),
+      firstBlitMs:     rel(t.firstBlit),
+    };
   }
 
   // ── Stats ─────────────────────────────────────────────────────────
