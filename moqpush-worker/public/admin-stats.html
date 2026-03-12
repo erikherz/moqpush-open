@@ -138,6 +138,13 @@
 
       html += '</div>';
 
+      // Show Shaka player config
+      if (d.shaka_config) {
+        const cfgId = 'cfg-' + Math.random().toString(36).slice(2, 8);
+        html += `<div class="catalog-toggle" onclick="document.getElementById('${cfgId}').classList.toggle('open')">Shaka Config</div>`;
+        html += `<pre class="catalog-pre" id="${cfgId}">${JSON.stringify(d.shaka_config, null, 2)}</pre>`;
+      }
+
       // Show catalog JSON for publisher
       if (d.catalog) {
         const catId = 'cat-' + Math.random().toString(36).slice(2, 8);

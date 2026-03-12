@@ -201,6 +201,12 @@
               play_time: parseFloat((stats.playTime || 0).toFixed(1)),
               state_changes: stats.stateHistory?.length || 0,
               switch_count: stats.switchHistory?.length || 0,
+              shaka_config: {
+                lowLatencyMode,
+                bufferingGoal,
+                rebufferingGoal,
+                bufferBehind,
+              },
             }),
           }).catch(() => {});
         }, 1000);
