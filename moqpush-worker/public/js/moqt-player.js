@@ -223,6 +223,11 @@ const GROUP_ORDER_DESCENDING = 0x02;
 const FILTER_LARGEST_OBJECT  = 0x02;
 const GROUP_END_STATUS       = 0x03;
 
+const MSG_PUBLISH_NAMESPACE  = 0x06;
+const MSG_PUBLISH_DONE       = 0x0b;
+const MSG_PUBLISH            = 0x1d;
+const MSG_PUBLISH_ERROR      = 0x1f;
+
 // ═══════════════════════════════════════════════════════════════════
 // §4  MoqtPlayer
 // ═══════════════════════════════════════════════════════════════════
@@ -253,10 +258,15 @@ class MoqtPlayer {
     this.wt = new WebTransport(this.relayUrl, {
       allowPooling: false,
       congestionControl: 'low-latency',
-      protocols: ['moql'],
+      protocols: ['moq-lite-03', 'moql', 'moqt-16', 'moqt-15'],
     });
     await this.wt.ready;
-    console.log('[MoQT] WebTransport connected');
+    console.log('[MoQT] WebTransport connected, protocol:', this.wt.protocol ?? '(none)');
+    this.wt.closed.then(info => {
+      console.log('[MoQT] WebTransport closed:', info);
+    }).catch(e => {
+      console.error('[MoQT] WebTransport closed with error:', e);
+    });
 
     // 2. Attach MSE to video element
     this.video.src = this.appender.getObjectURL();
@@ -376,6 +386,38 @@ class MoqtPlayer {
           case MSG_SUBSCRIBE_ERROR:
             await this._handleSubscribeError(br);
             break;
+          case MSG_PUBLISH: {
+            // Relay is announcing a track — respond with PUBLISH_ERROR (we're subscriber-only)
+            const pubReqId = await br.varint();
+            const pubNsParts = await br.varint();
+            for (let i = 0; i < pubNsParts; i++) await br.string();
+            const pubTrackName = await br.string();
+            console.log(`[MoQT] PUBLISH (announce) id=${pubReqId} track="${pubTrackName}" — sending PUBLISH_ERROR`);
+            // Respond with PUBLISH_ERROR (0x1f)
+            const errBody = new MsgBuilder()
+              .varint(pubReqId)    // request_id
+              .varint(500)         // error_code
+              .string('subscriber only') // reason
+              .finish();
+            await this.controlWriter.varint(MSG_PUBLISH_ERROR);
+            await this.controlWriter.writeMessage(errBody);
+            break;
+          }
+          case MSG_PUBLISH_DONE: {
+            const pdReqId = await br.varint();
+            const pdStatus = await br.varint();
+            console.log(`[MoQT] PUBLISH_DONE id=${pdReqId} status=${pdStatus}`);
+            break;
+          }
+          case MSG_PUBLISH_NAMESPACE: {
+            // Relay announcing a namespace is available
+            const pnReqId = await br.varint();
+            const pnNsParts = await br.varint();
+            const parts = [];
+            for (let i = 0; i < pnNsParts; i++) parts.push(await br.string());
+            console.log(`[MoQT] PUBLISH_NAMESPACE id=${pnReqId} ns="${parts.join('/')}"`);
+            break;
+          }
           case MSG_MAX_REQUEST_ID: {
             const maxId = await br.varint();
             console.log(`[MoQT] MAX_REQUEST_ID: ${maxId}`);
@@ -387,8 +429,7 @@ class MoqtPlayer {
             break;
           }
           default:
-            // Ignore unknown message types (PublishNamespace, etc.)
-            console.debug(`[MoQT] Ignoring control message type 0x${msgType.toString(16)}`);
+            console.log(`[MoQT] Control message type 0x${msgType.toString(16)} (${bodySize}B body, ignored)`);
         }
       }
     } catch (e) {
@@ -444,11 +485,18 @@ class MoqtPlayer {
   // ── Data Stream Loop (incoming unidirectional streams) ────────────
 
   async _readDataStreams() {
+    console.log('[MoQT] Data stream reader started, waiting for unidirectional streams...');
     const reader = this.wt.incomingUnidirectionalStreams.getReader();
+    let streamCount = 0;
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log('[MoQT] incomingUnidirectionalStreams ended');
+          break;
+        }
+        streamCount++;
+        console.log(`[MoQT] Unidirectional stream #${streamCount} received`);
         this._handleDataStream(value).catch(e => {
           console.error('[MoQT] Data stream error:', e);
         });
@@ -456,6 +504,7 @@ class MoqtPlayer {
     } catch (e) {
       console.error('[MoQT] Data streams error:', e);
     }
+    console.log(`[MoQT] Data stream reader exited after ${streamCount} streams`);
   }
 
   async _handleDataStream(readable) {
@@ -485,6 +534,8 @@ class MoqtPlayer {
     const subGroupId = hasSubgroup ? await r.varint() : 0;
     const priority   = hasPriority ? await r.u8() : 128;
 
+    console.log(`[MoQT] GROUP: type=0x${typeId.toString(16)} alias=${trackAlias} group=${groupId} subgroup=${subGroupId} priority=${priority}`);
+
     // Look up track by alias, or fall back to matching requestId
     let track = this.trackAliasMap.get(trackAlias);
     if (!track) {
@@ -493,7 +544,7 @@ class MoqtPlayer {
       }
     }
     if (!track) {
-      console.warn(`[MoQT] GROUP for unknown alias=${trackAlias}`);
+      console.warn(`[MoQT] GROUP for unknown alias=${trackAlias}, known aliases:`, [...this.trackAliasMap.keys()]);
       r.cancel();
       return;
     }
