@@ -415,16 +415,18 @@ Measured side-by-side on the same stream (1080p H.264 + AAC):
 
 | Metric | Custom MoQT + MSE | Shaka Player |
 |---|---|---|
-| Buffer health | **0.70s** | 1.02s |
-| Clock offset | **+419ms ahead** | baseline |
-| Reported latency | — | 2.06s |
+| Buffer health | **0.35s** | 0.34s |
+| Clock offset | **+261ms ahead** | baseline |
+| Reported latency | — | 1.61s |
+| Dropped frames | 0 | 1 |
 | Resolution | 1920x1080 | 1920x1080 |
+| Data received | 8.2 MB / 148 frames (31s) | — (8s) |
 
-The latency advantage comes from:
+The custom player displays video **261ms ahead** of Shaka (19:13:30.197 vs 19:13:29.936 on the in-stream clock overlay) despite near-identical buffer depths. The latency advantage comes from:
 
 1. **No ABR overhead** — single track, no bandwidth estimation or quality switching
 2. **No segment request/response cycle** — data pushed via QUIC streams, not pulled via HTTP
-3. **Minimal buffering** — fragments appended immediately on arrival, 0.7s buffer vs Shaka's 1.0s+
+3. **Minimal buffering** — fragments appended immediately on arrival, 0.35s buffer
 4. **QUIC low-latency congestion control** — `congestionControl: 'low-latency'` hint
 
 ## Control Message Reference
