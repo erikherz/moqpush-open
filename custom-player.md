@@ -5,21 +5,21 @@ A vanilla JavaScript MoQ Transport client that connects to Cloudflare's MoQ rela
 ## Architecture
 
 ```
-┌─────────────┐    WebTransport/QUIC    ┌───────────────────┐
-│  Publisher   │ ─────────────────────▶ │  Cloudflare Relay  │
-│ (moqpush-app)│                        │ (mediaoverquic.com)│
-└─────────────┘                        └────────┬──────────┘
-                                                │
-                                   WebTransport │ (H3/QUIC)
-                                                │
-                                       ┌────────▼──────────┐
-                                       │  Custom MoQT      │
-                                       │  Player (browser)  │
-                                       │                    │
-                                       │  moqt-player.js    │
-                                       │  fragment-appender  │
-                                       │  MSE SourceBuffers │
-                                       └───────────────────┘
+┌───────────────┐    WebTransport/QUIC    ┌──────────────────────┐
+│  Publisher    │ ──────────────────────▶ │  Cloudflare Relay    │
+│ (moqpush-app) │                         │ (mediaoverquic.com)  │
+└───────────────┘                         └──────────┬───────────┘
+                                                     │
+                                        WebTransport │ (H3/QUIC)
+                                                     │
+                                          ┌──────────▼─────────┐
+                                          │  Custom MoQT       │
+                                          │  Player (browser)  │
+                                          │                    │
+                                          │  moqt-player.js    │
+                                          │  fragment-appender │
+                                          │  MSE SourceBuffers │
+                                          └────────────────────┘
 ```
 
 Two source files, ~1000 lines total, zero dependencies:
@@ -133,20 +133,20 @@ Default is `latest_group` for lowest startup latency. Override with `?start=larg
 ### Subscription Flow
 
 ```
-Client                                  Relay
-  │                                       │
-  │── SUBSCRIBE(id=0, "catalog") ────────▶│
-  │◀─ SUBSCRIBE_OK(id=0, alias=0) ───────│
-  │                                       │
-  │◀═══ Unidirectional: GROUP(alias=0) ══▶│  ← catalog JSON arrives
-  │                                       │
-  │── SUBSCRIBE(id=2, "video2.m4s") ─────▶│  ← parallel with audio
-  │── SUBSCRIBE(id=4, "audio0.m4s") ─────▶│
-  │◀─ SUBSCRIBE_OK(id=2, alias=2) ───────│
-  │◀─ SUBSCRIBE_OK(id=4, alias=4) ───────│
-  │                                       │
-  │◀═══ Unidirectional: GROUP(alias=2) ══▶│  ← video CMAF fragments
-  │◀═══ Unidirectional: GROUP(alias=4) ══▶│  ← audio CMAF fragments
+Client                                    Relay
+  │                                         │
+  │── SUBSCRIBE(id=0, "catalog") ──────────▶│
+  │◀─ SUBSCRIBE_OK(id=0, alias=0) ─────────│
+  │                                         │
+  │◀═══ Unidirectional: GROUP(alias=0) ════▶│  ← catalog JSON arrives
+  │                                         │
+  │── SUBSCRIBE(id=2, "video2.m4s") ───────▶│  ← parallel with audio
+  │── SUBSCRIBE(id=4, "audio0.m4s") ───────▶│
+  │◀─ SUBSCRIBE_OK(id=2, alias=2) ─────────│
+  │◀─ SUBSCRIBE_OK(id=4, alias=4) ─────────│
+  │                                         │
+  │◀═══ Unidirectional: GROUP(alias=2) ════▶│  ← video CMAF fragments
+  │◀═══ Unidirectional: GROUP(alias=4) ════▶│  ← audio CMAF fragments
 ```
 
 After catalog parsing, video and audio subscriptions are issued in parallel via `Promise.all()` to avoid serialization delay.
@@ -251,9 +251,9 @@ Media data arrives on server-initiated unidirectional QUIC streams. Each stream 
 ### GROUP Header
 
 ```
-┌──────────────┬─────────────┬──────────┬──────────────┬──────────┐
-│ varint(type) │ varint(alias)│ varint(g)│ [varint(sub)]│ [u8(pri)]│
-└──────────────┴─────────────┴──────────┴──────────────┴──────────┘
+┌──────────────┬───────────────┬───────────┬───────────────┬───────────┐
+│ varint(type) │ varint(alias) │ varint(g) │ [varint(sub)] │ [u8(pri)] │
+└──────────────┴───────────────┴───────────┴───────────────┴───────────┘
 ```
 
 The `type` field encodes both the group type and feature flags:
