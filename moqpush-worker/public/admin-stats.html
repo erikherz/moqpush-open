@@ -158,6 +158,38 @@
         html += `<pre class="catalog-pre ${wasOpen ? 'open' : ''}" id="${cfgId}">${JSON.stringify(d.shaka_config, null, 2)}</pre>`;
       }
 
+      // Show video structure table for publisher
+      if (d.video_structure) {
+        const vs = d.video_structure;
+        const vsId = 'vs-' + (d.namespace || label).replace(/\W/g, '');
+        const wasOpen = document.getElementById(vsId)?.classList.contains('open');
+        const frameDur = vs.fps > 0 ? (1000 / vs.fps).toFixed(2) : '?';
+        const framesPerFrag = vs.fps > 0 && vs.fragment_duration_ms > 0
+          ? Math.round(vs.fps * vs.fragment_duration_ms / 1000)
+          : '?';
+
+        html += `<div class="catalog-toggle" onclick="document.getElementById('${vsId}').classList.toggle('open')">Video Structure</div>`;
+        html += `<pre class="catalog-pre ${wasOpen ? 'open' : ''}" id="${vsId}" style="line-height:1.8">`;
+        html += `<span style="color:#60a5fa;font-weight:600">Input Video Structure</span>\n`;
+        html += `\n`;
+        html += `  FPS .................. <span style="color:#4ade80">${vs.fps}</span>\n`;
+        html += `  Timescale ............ ${vs.timescale}${vs.default_sample_duration ? `  (sample_duration: ${vs.default_sample_duration})` : ''}\n`;
+        html += `  Frame Duration ....... ${frameDur} ms\n`;
+        html += `\n`;
+        html += `<span style="color:#60a5fa;font-weight:600">Segment (MoQT Group)</span>\n`;
+        html += `\n`;
+        html += `  Duration ............. <span style="color:#4ade80">${(vs.segment_duration_ms / 1000).toFixed(3)}s</span>  (${vs.segment_duration_ms} ms)\n`;
+        html += `  Fragments ............ <span style="color:#4ade80">${vs.fragments_per_segment}</span>\n`;
+        html += `\n`;
+        html += `<span style="color:#60a5fa;font-weight:600">Fragment (MoQT Object)</span>\n`;
+        html += `\n`;
+        html += `  Duration ............. <span style="color:#4ade80">${vs.fragment_duration_ms} ms</span>\n`;
+        html += `  Frames / Fragment .... ~${framesPerFrag}\n`;
+        html += `\n`;
+        html += `<span style="color:#737373">  [ ${vs.fps} fps ] → [ ${vs.fragments_per_segment} frags × ${vs.fragment_duration_ms} ms ] → [ segment ${vs.segment_duration_ms} ms ]</span>`;
+        html += `</pre>`;
+      }
+
       // Show catalog JSON for publisher (preserved open state across updates)
       if (d.catalog) {
         const catId = 'cat-' + (d.namespace || label).replace(/\W/g, '');

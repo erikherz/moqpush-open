@@ -375,6 +375,7 @@ async fn run_stats_loop(
         let audio_codec = stats.audio_codec.lock().unwrap().clone();
         let catalog = stats.catalog_json.lock().unwrap().clone();
         let transport = stats.transport.lock().unwrap().clone();
+        let video_structure = stats.video_structure.lock().unwrap().clone();
 
         // Build transport stats JSON
         let transport_json = transport.map(|t| serde_json::json!({
@@ -406,6 +407,14 @@ async fn run_stats_loop(
                 "audio_codec": if audio_codec.is_empty() { None } else { Some(audio_codec) },
                 "catalog": catalog,
                 "transport": transport_json,
+                "video_structure": video_structure.map(|vs| serde_json::json!({
+                    "segment_duration_ms": vs.segment_duration_ms,
+                    "fragments_per_segment": vs.fragments_per_segment,
+                    "fragment_duration_ms": (vs.fragment_duration_ms * 100.0).round() / 100.0,
+                    "fps": (vs.fps * 100.0).round() / 100.0,
+                    "timescale": vs.timescale,
+                    "default_sample_duration": vs.default_sample_duration,
+                })),
             }))
             .send()
             .await;

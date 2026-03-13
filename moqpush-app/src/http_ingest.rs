@@ -256,9 +256,15 @@ async fn handle_request(
             }
         }
     } else if is_media && fragments_sent > 0 {
-        let seg_duration_ms = segment_start.elapsed().as_millis();
+        let seg_duration_ms = segment_start.elapsed().as_millis() as u64;
         debug!("SEGMENT_END {} track={} frags={} duration={}ms",
             path, track_name.as_deref().unwrap_or("?"), fragments_sent, seg_duration_ms);
+        // Record video structure for stats reporting
+        if let Some(ref tn) = track_name {
+            let guard = state.lock().await;
+            let (ref _resolver, ref publisher) = *guard;
+            publisher.record_segment_structure(tn, seg_duration_ms, fragments_sent);
+        }
     } else if !is_init && !is_media && !buf.is_empty() {
         // Fallback: full-body detection
         let data = buf.freeze();

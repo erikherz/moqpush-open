@@ -249,22 +249,16 @@
         `;
       }).join('');
 
-      // Also update region checkboxes
+      // Update region checkbox status dots in-place (don't rebuild to avoid flap)
       const container = document.getElementById('region-checkboxes');
       if (container) {
-        container.innerHTML = [...allNodes].sort().map(node => {
-          const db = pullerNodes.find(p => p.node === node) || {};
-          const live = pullerLiveStatus[node];
-          const online = !!live;
-          const region = live?.region || db.region || '';
-          return `
-            <label>
-              <input type="checkbox" name="region" value="${node}">
-              <span class="puller-status ${online ? 'online' : 'offline'}"></span>
-              <span>${node} (${region})</span>
-            </label>
-          `;
-        }).join('');
+        for (const dot of container.querySelectorAll('.puller-status')) {
+          const node = dot.closest('label')?.querySelector('input')?.value;
+          if (!node) continue;
+          const online = !!pullerLiveStatus[node];
+          dot.classList.toggle('online', online);
+          dot.classList.toggle('offline', !online);
+        }
       }
     }
 

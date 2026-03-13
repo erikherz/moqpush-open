@@ -17,6 +17,17 @@ use moq_mux::CatalogProducer;
 
 use crate::mp4;
 
+/// Video structure snapshot from the most recent segment.
+#[derive(Clone, Default)]
+pub struct VideoStructure {
+    pub segment_duration_ms: u64,
+    pub fragments_per_segment: u32,
+    pub fragment_duration_ms: f64,
+    pub fps: f64,
+    pub timescale: u32,
+    pub default_sample_duration: Option<u32>,
+}
+
 /// Shared publisher stats readable from the stats loop via Arc.
 pub struct PublisherStats {
     pub bytes_published: AtomicU64,
@@ -31,6 +42,8 @@ pub struct PublisherStats {
     pub catalog_json: std::sync::Mutex<Option<serde_json::Value>>,
     /// Transport-level stats (QUIC/WebTransport), updated periodically.
     pub transport: std::sync::Mutex<Option<moq_lite::TransportStats>>,
+    /// Video structure from the latest completed segment.
+    pub video_structure: std::sync::Mutex<Option<VideoStructure>>,
 }
 
 impl PublisherStats {
@@ -46,6 +59,7 @@ impl PublisherStats {
             audio_codec: std::sync::Mutex::new(String::new()),
             catalog_json: std::sync::Mutex::new(None),
             transport: std::sync::Mutex::new(None),
+            video_structure: std::sync::Mutex::new(None),
         })
     }
 }
@@ -484,6 +498,44 @@ impl Publisher {
             state.new_segment = true;
             self.stats.segments_sent.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Record video structure from a completed segment.
+    pub fn record_segment_structure(
+        &self,
+        track_name: &str,
+        segment_duration_ms: u64,
+        fragment_count: u32,
+    ) {
+        // Only track video segments
+        let state = match self.tracks.get(track_name) {
+            Some(s) if s.track_type == TrackType::Video => s,
+            _ => return,
+        };
+
+        let fragment_duration_ms = if fragment_count > 0 {
+            segment_duration_ms as f64 / fragment_count as f64
+        } else {
+            0.0
+        };
+
+        // Compute FPS from timescale and default_sample_duration
+        let fps = if let Some(dur) = state.default_sample_duration {
+            if dur > 0 { state.timescale as f64 / dur as f64 } else { 0.0 }
+        } else {
+            0.0
+        };
+
+        let vs = VideoStructure {
+            segment_duration_ms,
+            fragments_per_segment: fragment_count,
+            fragment_duration_ms,
+            fps,
+            timescale: state.timescale,
+            default_sample_duration: state.default_sample_duration,
+        };
+
+        *self.stats.video_structure.lock().unwrap() = Some(vs);
     }
 
     pub fn track_count(&self) -> usize {
