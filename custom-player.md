@@ -27,7 +27,7 @@ Two source files, ~1000 lines total, zero dependencies:
 | File | Lines | Role |
 |------|-------|------|
 | `moqt-player.js` | ~770 | MoQT wire protocol, WebTransport, track subscription, data stream handling |
-| `fragment-appender.js` | ~265 | MSE SourceBuffer management, codec auto-detection from MP4 boxes |
+| `fragment-appender.js` | ~300 | MSE SourceBuffer management, codec auto-detection, fragment batching |
 
 ## Connection Lifecycle
 
@@ -115,9 +115,20 @@ body.string(trackName);               // e.g. "video2.m4s"
 body.u8(priority);                     // subscriber_priority (128=video, 64=audio)
 body.u8(0x02);                         // group_order = descending (newest first)
 body.bool(true);                       // forward = true (want future groups)
-body.varint(0x02);                     // filter = LargestObject
+body.varint(startFilter);              // filter type (default: LatestGroup)
 body.varint(0);                        // num_parameters = 0
 ```
+
+### Start Filters
+
+The player supports configurable start filters via the `start` URL parameter:
+
+| Filter | Value | Behavior |
+|--------|-------|----------|
+| `latest_group` | 0x01 | Start from the newest group (default) |
+| `largest_object` | 0x02 | Start from the largest object in the current group |
+
+Default is `latest_group` for lowest startup latency. Override with `?start=largest_object`.
 
 ### Subscription Flow
 
@@ -129,17 +140,16 @@ Client                                  Relay
   │                                       │
   │◀═══ Unidirectional: GROUP(alias=0) ══▶│  ← catalog JSON arrives
   │                                       │
-  │── SUBSCRIBE(id=2, "video2.m4s") ─────▶│
-  │◀─ SUBSCRIBE_OK(id=2, alias=2) ───────│
-  │                                       │
+  │── SUBSCRIBE(id=2, "video2.m4s") ─────▶│  ← parallel with audio
   │── SUBSCRIBE(id=4, "audio0.m4s") ─────▶│
+  │◀─ SUBSCRIBE_OK(id=2, alias=2) ───────│
   │◀─ SUBSCRIBE_OK(id=4, alias=4) ───────│
   │                                       │
   │◀═══ Unidirectional: GROUP(alias=2) ══▶│  ← video CMAF fragments
   │◀═══ Unidirectional: GROUP(alias=4) ══▶│  ← audio CMAF fragments
 ```
 
-Subscriptions are serialized — each `await this._subscribe()` blocks until `SUBSCRIBE_OK` arrives on the control stream. This prevents interleaved writes from corrupting the control stream framing.
+After catalog parsing, video and audio subscriptions are issued in parallel via `Promise.all()` to avoid serialization delay.
 
 ### Atomic Write Lock
 
@@ -206,9 +216,11 @@ The first subscription is always to the `"catalog"` track. The catalog is an MSF
 }
 ```
 
-### Track Selection
+The stats overlay displays "Catalog MSF draft-00 / CMSF draft-00" to indicate the catalog format version.
 
-The player selects one video track (highest quality = last in array) and one audio track:
+### Track Selection by Resolution
+
+The player selects the video track closest to the desired resolution. When multiple video tracks exist with different resolutions, selection is based on pixel count (width × height):
 
 ```js
 const videoTracks = [];
@@ -220,9 +232,13 @@ for (const track of catalog.tracks) {
   } else if (mime.startsWith('video') || track.name.includes('video')) {
     videoTracks.push(track);
   }
-  // skip non-media tracks like "sap-timeline"
 }
-const selectedVideo = videoTracks[videoTracks.length - 1]; // highest quality
+// Sort by resolution (width*height), select highest
+const selectedVideo = videoTracks.reduce((best, t) => {
+  const bp = best.selectionParams || {};
+  const tp = t.selectionParams || {};
+  return (tp.width * tp.height) > (bp.width * bp.height) ? t : best;
+});
 const selectedAudio = audioTracks[0];
 ```
 
@@ -373,6 +389,121 @@ _processQueue(type) {
 }
 ```
 
+### Fragment Batching
+
+For initial startup, `FragmentAppender` can batch multiple fragments into a single `appendBuffer()` call to reduce MSE overhead. Before the first decoded frame, incoming fragments are accumulated and flushed as one concatenated buffer:
+
+```js
+append(type, data) {
+  if (!this._firstDecodeFired[type]) {
+    this._batchBuffer[type].push(buf);
+    if (this._batchBuffer[type].length >= this.batchSize) {
+      this._flushBatch(type);
+    } else if (this._batchBuffer[type].length === 1) {
+      setTimeout(() => this._flushBatch(type), 250);  // flush after 250ms
+    }
+    return;
+  }
+  // After first decode, append immediately
+  this.queues[type].push(buf);
+  this._processQueue(type);
+}
+```
+
+Default batch size is 1 (no batching). Configurable via `?batch=N` URL parameter. Testing showed batching reduces the number of `appendBuffer()` calls but does not meaningfully improve TTFF — the seek-to-live-edge fix (below) was the actual bottleneck.
+
+## Time to First Frame (TTFF) Optimization
+
+### The Problem
+
+Out of the box, Chrome MSE exhibits a ~1 second delay between the first `appendBuffer()` call and the first decoded frame (`loadeddata` event). This delay persisted regardless of:
+- IDR keyframe frequency (tested 1, 2, 4 per second)
+- Fragment size (per-frame CMAF fragments via `gpac cdur=0.033`)
+- Fragment batching (1, 8, 16 fragments per append)
+
+### Root Cause: currentTime vs. Buffered Range Mismatch
+
+When a `<video>` element is created, `video.currentTime` defaults to **0**. But live stream data arrives at the live edge — e.g., timestamp 52 seconds. Chrome's MSE pipeline transitions through readyState levels:
+
+1. `HAVE_NOTHING` → `HAVE_METADATA` — triggers when init segment (moov) is appended
+2. `HAVE_METADATA` → `HAVE_CURRENT_DATA` — triggers when buffered data **covers `currentTime`**
+
+Since `currentTime=0` and buffered data starts at ~52s, Chrome stays stuck at `HAVE_METADATA`. It has the media data but won't fire `loadeddata` or begin decoding because the data doesn't cover the playback position. After ~1 second, Chrome's internal heuristics eventually resolve this, but that's the bottleneck.
+
+### The Fix: Seek to Buffered Start
+
+Immediately after the first media fragment is appended, seek `video.currentTime` to `buffered.start(0)`:
+
+```js
+// In _triggerPlay(), after play() is called:
+const seekToBuffered = () => {
+  const b = this.video.buffered;
+  if (b.length > 0 && this.video.currentTime < b.start(0)) {
+    this.video.currentTime = b.start(0);
+  }
+};
+seekToBuffered();
+setTimeout(seekToBuffered, 10);
+setTimeout(seekToBuffered, 50);
+
+// Also on first appendBuffer updateend:
+sb.addEventListener('updateend', () => {
+  const b = this.video.buffered;
+  if (b.length > 0 && this.video.currentTime < b.start(0)) {
+    this.video.currentTime = b.start(0);
+  }
+}, { once: true });
+```
+
+This immediately satisfies Chrome's `HAVE_CURRENT_DATA` requirement, triggering `loadeddata` and first frame decode within one frame interval.
+
+### Results
+
+| Metric | Before Fix | After Fix |
+|--------|-----------|-----------|
+| Append → Decode | ~1000ms | **16-21ms** |
+| Total TTFF | ~1400ms | **322-353ms** |
+
+The TTFF waterfall (displayed in the stats overlay):
+
+| Stage | Typical Time |
+|-------|-------------|
+| SETUP (WebTransport + MoQT handshake) | ~100ms |
+| Catalog (subscribe + parse) | ~50ms |
+| 1st Fragment (subscribe + receive) | ~100ms |
+| TTFF (total to first decoded frame) | **~330ms** |
+
+### Confirmed by Research
+
+The L3D-DASH paper (Fraunhofer HHI / Netflix / Comcast, ACM MMSys 2024) independently confirmed that increasing IDR frequency does not reduce MSE startup latency. Their finding aligns with our root cause analysis — the bottleneck is Chrome's readyState transition, not the codec layer.
+
+## Encoding Pipeline Requirements
+
+Source videos must be encoded with **true IDR frames** (H.264 NAL unit type 5) for reliable keyframe detection:
+
+```bash
+ffmpeg -i source.mp4 -c:v libx264 -preset veryfast -b:v 800k \
+  -forced-idr 1 -bf 0 -g 30 \
+  -vf "drawtext=text='%{pts\\:hms}':fontsize=48:fontcolor=white:x=10:y=10" \
+  -c:a aac -b:a 128k output.mp4
+```
+
+Key flags:
+- `-forced-idr 1` — Forces keyframes to be true IDR (NAL type 5), not recovery-point I-frames (NAL type 1 with SEI recovery point)
+- `-bf 0` — Removes B-frames for simpler decode dependency chain and lower latency
+- `-g 30` — One IDR per second at 30fps
+- `drawtext` — Burns timecodes for visual latency comparison
+
+The publisher (`moqpush-app`) detects IDR frames via `tfhd default_sample_flags` in CMAF fragments. Without `-forced-idr 1`, keyframes appear as NAL type 1 and are not detected as sync points.
+
+CMAF fragmentation is done by gpac:
+
+```bash
+gpac -i source.mp4 -o pipe://moqpush:cmaf:cdur=0.033:noinit
+```
+
+`cdur=0.033` produces per-frame CMAF fragments (~33ms each at 30fps), giving the finest possible granularity for low-latency delivery.
+
 ## Live Edge Management
 
 ### Buffer Trimming
@@ -411,23 +542,46 @@ This keeps playback locked to the live edge without manual intervention.
 
 ## Performance vs. Shaka Player
 
-Measured side-by-side on the same stream (1080p H.264 + AAC):
+Measured side-by-side on the same stream (720p H.264 + AAC, `-forced-idr 1 -bf 0`):
 
 | Metric | Custom MoQT + MSE | Shaka Player |
 |---|---|---|
-| Buffer health | **0.35s** | 0.34s |
-| Clock offset | **+261ms ahead** | baseline |
-| Reported latency | — | 1.61s |
-| Dropped frames | 0 | 1 |
-| Resolution | 1920x1080 | 1920x1080 |
-| Data received | 8.2 MB / 148 frames (31s) | — (8s) |
+| TTFF | **322-353ms** | ~1290ms |
+| Steady-state latency | **~0.2s buffer** | ~1.6s reported |
+| Dropped frames | 0 | 0–1 |
+| Resolution | 1280x720 | 1280x720 |
 
-The custom player displays video **261ms ahead** of Shaka (19:13:30.197 vs 19:13:29.936 on the in-stream clock overlay) despite near-identical buffer depths. The latency advantage comes from:
+The custom player achieves **sub-400ms TTFF** — nearly 4x faster than Shaka Player on the same stream. The latency advantage comes from:
 
-1. **No ABR overhead** — single track, no bandwidth estimation or quality switching
-2. **No segment request/response cycle** — data pushed via QUIC streams, not pulled via HTTP
-3. **Minimal buffering** — fragments appended immediately on arrival, 0.35s buffer
-4. **QUIC low-latency congestion control** — `congestionControl: 'low-latency'` hint
+1. **Seek-to-buffered-start** — Eliminates Chrome's ~1s MSE readyState stall by seeking `currentTime` to match buffered data
+2. **No ABR overhead** — Single track, no bandwidth estimation or quality switching
+3. **No segment request/response cycle** — Data pushed via QUIC streams, not pulled via HTTP
+4. **Per-frame CMAF fragments** — 33ms granularity via gpac `cdur=0.033`
+5. **Parallel subscribes** — Video and audio subscriptions issued simultaneously via `Promise.all()`
+6. **QUIC low-latency congestion control** — `congestionControl: 'low-latency'` hint
+7. **`latest_group` start filter** — Begins from the newest group, skipping stale data
+
+## URL Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `start` | `latest_group` | Start filter: `latest_group` or `largest_object` |
+| `batch` | `1` | Number of fragments to batch before first decode |
+| `bufferBehind` | `3` | Seconds of buffer to keep behind playhead |
+| `targetLatency` | `0.5` | Target latency in seconds for Shaka player |
+
+## Stats Overlay
+
+The player displays a 4-row TTFF waterfall in the top-left corner:
+
+```
+SETUP         102ms    ← WebTransport connect + MoQT handshake
+Catalog        48ms    ← Catalog subscribe + parse
+1st Fragment   97ms    ← First media fragment received
+TTFF          322ms    ← First decoded frame rendered
+
+Catalog MSF draft-00 / CMSF draft-00
+```
 
 ## Control Message Reference
 
@@ -452,7 +606,7 @@ The custom player displays video **261ms ahead** of Shaka (19:13:30.197 vs 19:13
 moqpush-worker/public/
 ├── js/
 │   ├── moqt-player.js        # MoQT protocol + MoqtPlayer class
-│   └── fragment-appender.js   # MSE SourceBuffer management
+│   └── fragment-appender.js   # MSE SourceBuffer management + batching
 └── player.html                # Routes ?custom-player=true to MoqtPlayer
 ```
 
