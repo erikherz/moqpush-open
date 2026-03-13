@@ -35,6 +35,16 @@
     .console-panel.open { max-height: 500px; overflow-y: auto; }
     .console-panel pre { margin: 0; padding: 12px 16px; font-family: 'Roboto Mono', 'SF Mono', monospace; font-size: 11px; line-height: 1.5; color: #e6edf3; white-space: pre-wrap; word-break: break-all; }
     .console-panel .console-label { color: #7ee787; font-weight: 600; display: block; margin-bottom: 4px; }
+    .password-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .password-overlay.hidden { display: none; }
+    .password-box { text-align: center; max-width: 360px; }
+    .password-box h2 { margin-bottom: 8px; font-size: 1.1em; }
+    .password-box p { color: #888; font-size: 0.85em; margin-bottom: 16px; }
+    .password-box input { background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 10px 14px; border-radius: 6px; font-size: 1em; width: 100%; margin-bottom: 10px; text-align: center; }
+    .password-box input:focus { outline: none; border-color: #667eea; }
+    .password-box button { background: #667eea; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; font-size: 0.9em; cursor: pointer; }
+    .password-box button:hover { background: #5a6fd6; }
+    .password-box .pw-error { color: #e74c3c; font-size: 0.85em; margin-top: 8px; display: none; }
   </style>
 </head>
 <body>
@@ -58,6 +68,16 @@
     </button>
     <div class="console-panel" id="console-panel">
       <pre id="console-content"><span class="console-label">Waiting for catalog...</span></pre>
+    </div>
+  </div>
+
+  <div class="password-overlay hidden" id="password-overlay">
+    <div class="password-box">
+      <h2>This stream is password-protected</h2>
+      <p id="pw-namespace"></p>
+      <input type="password" id="pw-input" placeholder="Enter password" autocomplete="off">
+      <button onclick="submitPassword()">Watch</button>
+      <div class="pw-error" id="pw-error">Incorrect password</div>
     </div>
   </div>
 
@@ -94,33 +114,79 @@
     let playerStatsInterval = null;
     let startTime = Date.now();
 
-    // ?player=shaka → Shaka, anything else (default / ?player=viper) → Viper custom player
+    // ?player=shaka -> Shaka, anything else (default / ?player=viper) -> Viper custom player
     const playerParam = urlParams.get('player');
     const useShaka = playerParam === 'shaka';
     document.getElementById('player-mode').textContent = useShaka ? 'Shaka Player' : 'Viper Player (MoQT + MSE)';
 
-    // --- Route to correct player ---
-    if (useShaka) {
-      loadShakaPlayer();
-    } else {
-      loadCustomPlayer();
+    // --- Password check, then route to correct player ---
+    let passwordCallback = null;
+
+    function submitPassword() {
+      const pw = document.getElementById('pw-input').value;
+      if (passwordCallback) passwordCallback(pw);
     }
+    document.getElementById('pw-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitPassword();
+    });
+
+    async function checkPassword() {
+      statusTitle.textContent = 'Looking up broadcast...';
+      const dirResp = await fetch(`/api/broadcasts/${namespace}`);
+      if (!dirResp.ok) {
+        statusTitle.textContent = 'Broadcast not found';
+        statusDetail.textContent = 'This namespace is not currently live';
+        statusTitle.classList.add('error');
+        return null;
+      }
+      const dirData = await dirResp.json();
+
+      if (dirData.has_password) {
+        // Show password prompt
+        overlay.classList.add('hidden');
+        document.getElementById('pw-namespace').textContent = namespace;
+        document.getElementById('password-overlay').classList.remove('hidden');
+        document.getElementById('pw-input').focus();
+
+        // Wait for user to submit password
+        const authenticated = await new Promise((resolve) => {
+          passwordCallback = async (pw) => {
+            const authResp = await fetch(`/api/broadcasts/${namespace}/auth`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ password: pw }),
+            });
+            if (authResp.ok) {
+              document.getElementById('password-overlay').classList.add('hidden');
+              overlay.classList.remove('hidden');
+              resolve(true);
+            } else {
+              document.getElementById('pw-error').style.display = 'block';
+              document.getElementById('pw-input').value = '';
+              document.getElementById('pw-input').focus();
+            }
+          };
+        });
+        if (!authenticated) return null;
+      }
+
+      return dirData;
+    }
+
+    (async () => {
+      const dirData = await checkPassword();
+      if (!dirData) return;
+      if (useShaka) {
+        loadShakaPlayer(dirData);
+      } else {
+        loadCustomPlayer(dirData);
+      }
+    })();
 
     // --- Custom MoQT Player (direct MSE injection, sub-second latency) ---
 
-    async function loadCustomPlayer() {
+    async function loadCustomPlayer(dirData) {
       try {
-        statusTitle.textContent = 'Looking up broadcast...';
-        const dirResp = await fetch(`/api/broadcasts/${namespace}`);
-
-        if (!dirResp.ok) {
-          statusTitle.textContent = 'Broadcast not found';
-          statusDetail.textContent = 'This namespace is not currently live';
-          statusTitle.classList.add('error');
-          return;
-        }
-
-        const dirData = await dirResp.json();
         relayUrl = dirData.relay_url;
 
         // Override relay from query param
@@ -233,19 +299,8 @@
 
     // --- Shaka Player (buffered playback) ---
 
-    async function loadShakaPlayer() {
+    async function loadShakaPlayer(dirData) {
       try {
-        statusTitle.textContent = 'Looking up broadcast...';
-        const dirResp = await fetch(`/api/broadcasts/${namespace}`);
-
-        if (!dirResp.ok) {
-          statusTitle.textContent = 'Broadcast not found';
-          statusDetail.textContent = 'This namespace is not currently live';
-          statusTitle.classList.add('error');
-          return;
-        }
-
-        const dirData = await dirResp.json();
         relayUrl = dirData.relay_url;
 
         if (typeof shaka === 'undefined') {

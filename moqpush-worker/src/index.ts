@@ -125,6 +125,10 @@ export default {
     }
 
     // --- Broadcast lookup (player) ---
+    if (path.startsWith('/api/broadcasts/') && path.endsWith('/auth') && request.method === 'POST') {
+      const namespace = path.split('/api/broadcasts/')[1].replace('/auth', '');
+      if (namespace) return handlePlayerAuth(namespace, request, env);
+    }
     if (path.startsWith('/api/broadcasts/') && request.method === 'GET') {
       const namespace = path.split('/api/broadcasts/')[1];
       if (namespace) return handleBroadcastLookup(namespace, env);
@@ -147,6 +151,10 @@ export default {
     if (path.startsWith('/api/admin/namespaces/') && path.endsWith('/relay') && request.method === 'PUT') {
       const namespace = path.split('/api/admin/namespaces/')[1].replace('/relay', '');
       if (namespace) return handleAdminUpdateRelay(namespace, request, env);
+    }
+    if (path.startsWith('/api/admin/namespaces/') && path.endsWith('/player-password') && request.method === 'PUT') {
+      const namespace = path.split('/api/admin/namespaces/')[1].replace('/player-password', '');
+      if (namespace) return handleAdminUpdatePlayerPassword(namespace, request, env);
     }
     if (path.startsWith('/api/admin/namespaces/') && request.method === 'DELETE') {
       const namespace = path.split('/api/admin/namespaces/')[1];
@@ -527,12 +535,44 @@ async function handleBroadcastLookup(namespace: string, env: Env): Promise<Respo
     region: p.region,
   }));
 
+  // Check if namespace has a player password
+  const nsRow = await env.DB.prepare(
+    'SELECT player_password FROM namespaces WHERE namespace = ?'
+  ).bind(namespace).first<{ player_password: string | null }>();
+
   return jsonResponse({
     namespace,
     relay_url: entry.relay_url,
     started_at: entry.started_at,
     pullers: activePullers,
+    has_password: !!(nsRow?.player_password),
   });
+}
+
+async function handlePlayerAuth(namespace: string, request: Request, env: Env): Promise<Response> {
+  const body = await request.json<{ password: string }>();
+  if (!body.password) {
+    return jsonResponse({ error: 'missing password' }, 400);
+  }
+
+  const ns = await env.DB.prepare(
+    'SELECT player_password FROM namespaces WHERE namespace = ?'
+  ).bind(namespace).first<{ player_password: string | null }>();
+
+  if (!ns) {
+    return jsonResponse({ error: 'namespace not found' }, 404);
+  }
+
+  if (!ns.player_password) {
+    // No password set — allow access
+    return jsonResponse({ ok: true });
+  }
+
+  if (body.password !== ns.player_password) {
+    return jsonResponse({ error: 'incorrect password' }, 403);
+  }
+
+  return jsonResponse({ ok: true });
 }
 
 async function handleBroadcastsList(env: Env): Promise<Response> {
@@ -576,7 +616,7 @@ async function handleAdminListNamespaces(request: Request, env: Env): Promise<Re
   if (admin instanceof Response) return admin;
 
   const rows = await env.DB.prepare(
-    'SELECT id, namespace, push_key, owner_email, created_at FROM namespaces ORDER BY created_at DESC'
+    'SELECT id, namespace, push_key, owner_email, player_password, created_at FROM namespaces ORDER BY created_at DESC'
   ).all();
 
   // Get region assignments for each namespace
@@ -667,6 +707,20 @@ async function handleAdminUpdateRelay(namespace: string, request: Request, env: 
   ).bind(relayUrl, namespace).run();
 
   return jsonResponse({ ok: true, namespace, relay_url: relayUrl });
+}
+
+async function handleAdminUpdatePlayerPassword(namespace: string, request: Request, env: Env): Promise<Response> {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const body = await request.json<{ player_password: string | null }>();
+  const password = body.player_password?.trim() || null;
+
+  await env.DB.prepare(
+    'UPDATE namespaces SET player_password = ? WHERE namespace = ?'
+  ).bind(password, namespace).run();
+
+  return jsonResponse({ ok: true, namespace, has_password: !!password });
 }
 
 async function handleAdminDeleteNamespace(namespace: string, request: Request, env: Env): Promise<Response> {

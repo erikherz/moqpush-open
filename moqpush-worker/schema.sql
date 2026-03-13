@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS namespaces (
   push_key TEXT UNIQUE NOT NULL,
   owner_email TEXT NOT NULL,
   relay_url TEXT NOT NULL DEFAULT 'https://draft-14.cloudflare.mediaoverquic.com',
+  player_password TEXT DEFAULT NULL,
   created_at INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (owner_email) REFERENCES users(email)
 );

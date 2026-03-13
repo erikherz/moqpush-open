@@ -113,6 +113,7 @@
               <th>Namespace</th>
               <th>Push Key</th>
               <th>Relay URL</th>
+              <th>Player Password</th>
               <th>Pre-position</th>
               <th>Warm Status</th>
               <th>Status</th>
@@ -339,6 +340,9 @@
             <span class="relay-url" style="font-size:0.75em;color:#888;cursor:pointer" onclick="editRelay('${b.namespace}', this)" title="Click to edit">${b.relay_url || 'default'}</span>
           </td>
           <td>
+            <span style="font-size:0.8em;cursor:pointer;color:${b.player_password ? '#fbbf24' : '#555'}" onclick="editPlayerPassword('${b.namespace}', this)" title="Click to edit">${b.player_password ? '🔒 set' : 'none'}</span>
+          </td>
+          <td>
             <div class="region-chips" onclick="editRegions('${b.namespace}', ${JSON.stringify(b.regions).replace(/"/g, '&quot;')})">
               ${(b.regions || []).length > 0
                 ? b.regions.map(r => `<span class="region-chip">${r}</span>`).join('')
@@ -420,6 +424,21 @@
       });
       if (resp.ok) {
         toast(`Updated relay for ${namespace}`);
+        loadNamespaces();
+      }
+    }
+
+    async function editPlayerPassword(namespace, el) {
+      const val = prompt(`Player password for "${namespace}" (leave blank to remove):`, '');
+      if (val === null) return;
+      const player_password = val.trim() || null;
+      const resp = await fetch(`/api/admin/namespaces/${namespace}/player-password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_password }),
+      });
+      if (resp.ok) {
+        toast(player_password ? `Password set for ${namespace}` : `Password removed for ${namespace}`);
         loadNamespaces();
       }
     }
