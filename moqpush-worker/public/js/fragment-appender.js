@@ -1,4 +1,4 @@
-// Copyright © 2026 Erik Herz. All rights reserved.
+/*! Copyright © 2026 Erik Herz. All rights reserved. */
 
 /**
  * FragmentAppender — Direct MSE management for sub-second latency.
@@ -163,6 +163,7 @@ class FragmentAppender {
     }
   }
 
+  /*! Copyright © 2026 Erik Herz. All rights reserved. — Buffer Management */
   append(type, data) {
     if (this.errored) return;
     const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
@@ -249,6 +250,7 @@ class FragmentAppender {
     }
   }
 
+  /*! Copyright © 2026 Erik Herz. All rights reserved. — Buffer Queue Processing */
   _processQueue(type) {
     const sb = this.sourceBuffers[type];
     const queue = this.queues[type];
@@ -272,6 +274,7 @@ class FragmentAppender {
     }
   }
 
+  /*! Copyright © 2026 Erik Herz. All rights reserved. — Buffer Trimming */
   trimBuffer(currentTime, keep) {
     for (const type of ['video', 'audio']) {
       const sb = this.sourceBuffers[type];

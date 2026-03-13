@@ -1,4 +1,4 @@
-// Copyright © 2026 Erik Herz. All rights reserved.
+/*! Copyright © 2026 Erik Herz. All rights reserved. */
 
 /**
  * moqt-player.js — Custom low-latency MoQT player.
@@ -800,7 +800,7 @@ class MoqtPlayer {
   }
 
   // --- Buffer Trimming ---
-
+  /*! Copyright © 2026 Erik Herz. All rights reserved. — Buffer Trimming */
   _trimLoop() {
     setInterval(() => {
       if (this.video.currentTime > 0) {
@@ -820,6 +820,7 @@ class MoqtPlayer {
 
   /** Get the live edge — use video buffer (what's actually decodable),
    *  fall back to audio if video hasn't arrived yet. */
+  /*! Copyright © 2026 Erik Herz. All rights reserved. — Live Edge Management */
   _getLiveEdge() {
     const videoSb = this.appender.sourceBuffers.video;
     if (videoSb && videoSb.buffered.length > 0) {
@@ -835,7 +836,7 @@ class MoqtPlayer {
   }
 
   // --- Play trigger ---
-
+  /*! Copyright © 2026 Erik Herz. All rights reserved. — Auto-Seek to Live Edge */
   _triggerPlay() {
     if (this._playTriggered) return;
     this._playTriggered = true;
