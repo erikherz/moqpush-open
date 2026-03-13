@@ -93,14 +93,16 @@
     let playerStatsInterval = null;
     let startTime = Date.now();
 
-    const useCustomPlayer = urlParams.get('custom-player') === 'true';
-    document.getElementById('player-mode').textContent = useCustomPlayer ? 'Custom MoQT + MSE' : 'Shaka Player';
+    // ?player=shaka → Shaka, anything else (default / ?player=viper) → Viper custom player
+    const playerParam = urlParams.get('player');
+    const useShaka = playerParam === 'shaka';
+    document.getElementById('player-mode').textContent = useShaka ? 'Shaka Player' : 'Viper Player (MoQT + MSE)';
 
     // ── Route to correct player ─────────────────────────────────────
-    if (useCustomPlayer) {
-      loadCustomPlayer();
-    } else {
+    if (useShaka) {
       loadShakaPlayer();
+    } else {
+      loadCustomPlayer();
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -178,7 +180,7 @@
           const t = player.getTiming();
           const tRow = (label, ms) => ms != null ? row(label, `${ms}ms`) : '';
           statsEl.innerHTML = `
-            <div class="stats-title">Custom MoQT Player</div>
+            <div class="stats-title">Viper Player</div>
             ${row('Protocol', 'MoQ Transport / WebTransport')}
             ${row('Catalog', 'MSF draft-00 / CMSF draft-00')}
             ${row('Relay', relayUrl.replace('https://', ''))}
@@ -196,7 +198,7 @@
             ${tRow('Catalog', t.catalogMs)}
             ${tRow('1st Fragment', t.firstFragmentMs)}
             ${row('', '')}
-            ${row('Player', 'Custom MoQT + MSE')}
+            ${row('Player', 'Viper (MoQT + MSE)')}
             ${tRow('TTFF', t.firstDecodedMs)}
           `;
         }, 500);
