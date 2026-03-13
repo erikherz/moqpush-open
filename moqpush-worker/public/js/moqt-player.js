@@ -1,3 +1,5 @@
+// Copyright © 2026 Erik Herz. All rights reserved.
+
 /**
  * moqt-player.js — Custom low-latency MoQT player.
  *
@@ -252,6 +254,7 @@ class MoqtPlayer {
     this.startFilter = opts.startFilter === 'latest_group' ? FILTER_LATEST_GROUP : FILTER_LARGEST_OBJECT;
 
     this.appender = new window.FragmentAppender();
+    if (opts.batchSize !== undefined) this.appender.batchSize = opts.batchSize;
     this.trackAliasMap = new Map();   // trackAlias → { name, type:'video'|'audio' }
     this.subscribeCallbacks = new Map(); // requestId → { resolve, reject }
     this.nextReqId = 0;
@@ -304,11 +307,31 @@ class MoqtPlayer {
           this.timing.firstVideoAppend = now;
         }
         console.log(`[MoQT] Video appendBuffer #${this._videoAppends.length}: ${data.byteLength}B ${isInit ? '(init)' : '(moof)'} at ${(now - this.timing.connectStart).toFixed(0)}ms`);
+
+        // After first media append, seek to buffered start on updateend
+        if (!isInit && !this._seekOnFirstAppend) {
+          this._seekOnFirstAppend = true;
+          const sb = this.appender.sourceBuffers.video;
+          if (sb) {
+            sb.addEventListener('updateend', () => {
+              const b = this.video.buffered;
+              if (b.length > 0 && this.video.currentTime < b.start(0)) {
+                console.log(`[MoQT] Seeking to buffered start on updateend: ${b.start(0).toFixed(3)}s`);
+                this.video.currentTime = b.start(0);
+              }
+            }, { once: true });
+          }
+        }
       }
     };
     this.video.addEventListener('loadeddata', () => {
       if (!this.timing.firstFrameDecoded) {
         this.timing.firstFrameDecoded = performance.now();
+        // Stop batching — flush any remaining buffered fragments, switch to per-fragment appends
+        this.appender._firstDecodeFired.video = true;
+        this.appender._firstDecodeFired.audio = true;
+        this.appender._flushBatch('video');
+        this.appender._flushBatch('audio');
         this._logTiming();
       }
     }, { once: true });
@@ -824,6 +847,24 @@ class MoqtPlayer {
   _triggerPlay() {
     if (this._playTriggered) return;
     this._playTriggered = true;
+
+    // Seek to buffered start so Chrome transitions to HAVE_CURRENT_DATA immediately.
+    // Without this, currentTime=0 but data starts at the live edge (e.g. 52s),
+    // so Chrome stays at HAVE_METADATA until enough data accumulates.
+    const seekToBuffered = () => {
+      const b = this.video.buffered;
+      if (b.length > 0 && this.video.currentTime < b.start(0)) {
+        const target = b.start(0);
+        console.log(`[MoQT] Seeking to buffered start: ${target.toFixed(3)}s`);
+        this.video.currentTime = target;
+      }
+    };
+
+    // Try immediately, and also after a short delay for the append to land
+    seekToBuffered();
+    setTimeout(seekToBuffered, 10);
+    setTimeout(seekToBuffered, 50);
+
     this.video.play().catch(e => {
       console.warn('[MoQT] play() rejected:', e.message);
     });

@@ -1,3 +1,5 @@
+// Copyright © 2026 Erik Herz. All rights reserved.
+
 /**
  * FragmentAppender — Direct MSE management for sub-second latency.
  * Adapted from viper project. Strips diagnostics, keeps core MSE logic.
@@ -124,6 +126,9 @@ class FragmentAppender {
     this.initialized = false;
     this.errored = false;
     this.onAppend = null; // callback(type, data, isInit) — fires when appendBuffer() is actually called
+    this._firstDecodeFired = { video: false, audio: false };
+    this._batchBuffer = { video: [], audio: [] };
+    this.batchSize = 8; // batch first N video/audio fragments into one appendBuffer call
 
     this._openPromise = new Promise(resolve => {
       this.mediaSource.addEventListener('sourceopen', resolve, { once: true });
@@ -161,7 +166,40 @@ class FragmentAppender {
   append(type, data) {
     if (this.errored) return;
     const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+
+    // Before first decode, accumulate fragments and flush as one big append
+    if (!this._firstDecodeFired[type]) {
+      this._batchBuffer[type].push(buf);
+      if (this._batchBuffer[type].length >= this.batchSize) {
+        this._flushBatch(type);
+      } else if (this._batchBuffer[type].length === 1) {
+        // Start a timeout — flush whatever we have after 250ms
+        setTimeout(() => {
+          if (!this._firstDecodeFired[type] && this._batchBuffer[type].length > 0) {
+            this._flushBatch(type);
+          }
+        }, 250);
+      }
+      return;
+    }
+
     this.queues[type].push(buf);
+    if (this.sourceBuffers[type]) {
+      this._processQueue(type);
+    }
+  }
+
+  _flushBatch(type) {
+    const chunks = this._batchBuffer[type];
+    if (chunks.length === 0) return;
+    let totalLen = 0;
+    for (const c of chunks) totalLen += c.byteLength;
+    const merged = new Uint8Array(totalLen);
+    let off = 0;
+    for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
+    console.log(`[MSE] Batched ${chunks.length} ${type} fragments (${totalLen}B) into single append`);
+    this._batchBuffer[type] = [];
+    this.queues[type].push(merged);
     if (this.sourceBuffers[type]) {
       this._processQueue(type);
     }
@@ -258,6 +296,8 @@ class FragmentAppender {
     this.codecs = { video: null, audio: null };
     this.initialized = false;
     this._autoInitStarted = false;
+    this._firstDecodeFired = { video: false, audio: false };
+    this._batchBuffer = { video: [], audio: [] };
   }
 }
 
