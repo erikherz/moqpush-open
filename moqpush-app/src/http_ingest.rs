@@ -167,6 +167,8 @@ async fn handle_request(
     let mut track_name: Option<String> = None;
     let mut fragments_sent = 0u32;
     let segment_start = std::time::Instant::now();
+    let mut first_bdt: Option<u64> = None;
+    let mut last_bdt: Option<u64> = None;
 
     while let Some(frame_result) = body.frame().await {
         let frame = match frame_result {
@@ -221,6 +223,15 @@ async fn handle_request(
                     let elapsed_ms = segment_start.elapsed().as_millis();
                     debug!("FRAG {} track={} frag={} size={}B idr={} bdt={:?} elapsed={}ms",
                         path, tn, fragments_sent, frag_data.len(), is_idr, bdt, elapsed_ms);
+                    // Track BDT range for accurate segment duration
+                    if let Some(b) = bdt {
+                        if first_bdt.is_none() { first_bdt = Some(b); }
+                        last_bdt = Some(b);
+                    }
+                    // On first fragment, try to discover default_sample_duration from tfhd
+                    if fragments_sent == 0 {
+                        publisher.update_sample_duration_from_fragment(tn, frag_data);
+                    }
                     if let Err(e) = publisher.send_fragment(tn, frag_data) {
                         warn!("Failed to send fragment: {}", e);
                     }
@@ -262,13 +273,13 @@ async fn handle_request(
         }
     } else if is_media && fragments_sent > 0 {
         let seg_duration_ms = segment_start.elapsed().as_millis() as u64;
-        debug!("SEGMENT_END {} track={} frags={} duration={}ms",
-            path, track_name.as_deref().unwrap_or("?"), fragments_sent, seg_duration_ms);
-        // Record video structure for stats reporting
+        debug!("SEGMENT_END {} track={} frags={} wall={}ms first_bdt={:?} last_bdt={:?}",
+            path, track_name.as_deref().unwrap_or("?"), fragments_sent, seg_duration_ms, first_bdt, last_bdt);
+        // Record video structure for stats reporting (using BDT-based duration)
         if let Some(ref tn) = track_name {
             let guard = state.lock().await;
             let (ref _resolver, ref publisher) = *guard;
-            publisher.record_segment_structure(tn, seg_duration_ms, fragments_sent);
+            publisher.record_segment_structure(tn, fragments_sent, first_bdt, last_bdt);
         }
     } else if !is_init && !is_media && !buf.is_empty() {
         // Fallback: full-body detection

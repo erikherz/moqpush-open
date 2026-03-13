@@ -113,6 +113,7 @@
     let bufferInterval = null;
     let playerStatsInterval = null;
     let startTime = Date.now();
+    const sessionId = crypto.randomUUID();
 
     // ?player=shaka -> Shaka, anything else (default / ?player=viper) -> Viper custom player
     const playerParam = urlParams.get('player');
@@ -276,6 +277,8 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               namespace,
+              player_type: 'viper',
+              session_id: sessionId,
               buffer_health: parseFloat(s.bufferHealth),
               width: s.width || 0,
               height: s.height || 0,
@@ -392,6 +395,8 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               namespace,
+              player_type: 'shaka',
+              session_id: sessionId,
               buffer_health: parseFloat(bufferHealth.toFixed(2)),
               latency: parseFloat((stats.liveLatency || 0).toFixed(2)),
               width: stats.width || 0,

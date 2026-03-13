@@ -1,14 +1,23 @@
 // StatsHub Durable Object — real-time ephemeral stats aggregation.
 // Stats pushed by moqpush-app (publisher) every 1s and by players every 1s.
 // Broadcasts to admin WebSocket clients. Auto-expires entries after 10s of inactivity.
+// Player stats are grouped by player_type (viper/shaka) and averaged across sessions.
 
 import { DurableObject } from "cloudflare:workers";
+
+interface PlayerSession {
+  data: Record<string, any>;
+  updated_at: number;
+}
+
+interface PlayerTypeEntry {
+  sessions: Map<string, PlayerSession>;
+}
 
 interface StatsEntry {
   publisher?: Record<string, any>;
   publisher_updated_at?: number;
-  player?: Record<string, any>;
-  player_updated_at?: number;
+  players: Map<string, PlayerTypeEntry>; // keyed by player_type
 }
 
 export class StatsHub extends DurableObject {
@@ -40,17 +49,30 @@ export class StatsHub extends DurableObject {
       return Response.json({ error: "missing namespace or role" }, { status: 400 });
     }
 
-    const entry: StatsEntry = this.stats.get(namespace) || {};
+    let entry = this.stats.get(namespace);
+    if (!entry) {
+      entry = { players: new Map() };
+      this.stats.set(namespace, entry);
+    }
 
     if (role === "publisher") {
       entry.publisher = data;
       entry.publisher_updated_at = Date.now();
     } else if (role === "player") {
-      entry.player = data;
-      entry.player_updated_at = Date.now();
-    }
+      const playerType = data.player_type || "unknown";
+      const sessionId = data.session_id || "default";
 
-    this.stats.set(namespace, entry);
+      let typeEntry = entry.players.get(playerType);
+      if (!typeEntry) {
+        typeEntry = { sessions: new Map() };
+        entry.players.set(playerType, typeEntry);
+      }
+
+      typeEntry.sessions.set(sessionId, {
+        data,
+        updated_at: Date.now(),
+      });
+    }
 
     this.broadcast();
     this.scheduleAlarm();
@@ -68,6 +90,45 @@ export class StatsHub extends DurableObject {
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
+  private averagePlayerSessions(typeEntry: PlayerTypeEntry): Record<string, any> {
+    const sessions = Array.from(typeEntry.sessions.values()).map(s => s.data);
+    if (sessions.length === 0) return {};
+
+    const count = sessions.length;
+    const result: Record<string, any> = { viewer_count: count };
+
+    // Numeric fields to average
+    const avgFields = [
+      'buffer_health', 'latency', 'bitrate_mbps', 'dropped_frames',
+      'estimated_bandwidth', 'load_latency', 'buffering_time', 'play_time',
+      'uptime_secs', 'switch_count', 'frames_received', 'bytes_received',
+    ];
+
+    for (const field of avgFields) {
+      const values = sessions.map(s => s[field]).filter(v => v != null && typeof v === 'number');
+      if (values.length > 0) {
+        const avg = values.reduce((a, b) => a + b, 0) / values.length;
+        result[field] = parseFloat(avg.toFixed(2));
+      }
+    }
+
+    // Take from first session for non-averaged fields
+    const first = sessions[0];
+    if (first.width) result.width = first.width;
+    if (first.height) result.height = first.height;
+    if (first.video_codec) result.video_codec = first.video_codec;
+    if (first.audio_codec) result.audio_codec = first.audio_codec;
+    if (first.relay) result.relay = first.relay;
+    if (first.shaka_config) result.shaka_config = first.shaka_config;
+    if (first.custom_player) result.custom_player = first.custom_player;
+
+    // Most recent updated_at
+    const maxUpdated = Math.max(...Array.from(typeEntry.sessions.values()).map(s => s.updated_at));
+    result.updated_at = maxUpdated;
+
+    return result;
+  }
+
   private snapshot(): Record<string, any> {
     const result: Record<string, any> = {};
     for (const [ns, entry] of this.stats) {
@@ -75,9 +136,18 @@ export class StatsHub extends DurableObject {
       if (entry.publisher) {
         out.publisher = { ...entry.publisher, updated_at: entry.publisher_updated_at };
       }
-      if (entry.player) {
-        out.player = { ...entry.player, updated_at: entry.player_updated_at };
+
+      // Build players object keyed by type with averaged stats
+      const players: Record<string, any> = {};
+      for (const [playerType, typeEntry] of entry.players) {
+        if (typeEntry.sessions.size > 0) {
+          players[playerType] = this.averagePlayerSessions(typeEntry);
+        }
       }
+      if (Object.keys(players).length > 0) {
+        out.players = players;
+      }
+
       result[ns] = out;
     }
     return result;
@@ -106,12 +176,22 @@ export class StatsHub extends DurableObject {
         delete entry.publisher_updated_at;
         changed = true;
       }
-      if (entry.player_updated_at && now - entry.player_updated_at > EXPIRY_MS) {
-        delete entry.player;
-        delete entry.player_updated_at;
-        changed = true;
+
+      // Expire individual player sessions
+      for (const [playerType, typeEntry] of entry.players) {
+        for (const [sessionId, session] of typeEntry.sessions) {
+          if (now - session.updated_at > EXPIRY_MS) {
+            typeEntry.sessions.delete(sessionId);
+            changed = true;
+          }
+        }
+        if (typeEntry.sessions.size === 0) {
+          entry.players.delete(playerType);
+          changed = true;
+        }
       }
-      if (!entry.publisher && !entry.player) {
+
+      if (!entry.publisher && entry.players.size === 0) {
         this.stats.delete(ns);
         changed = true;
       }

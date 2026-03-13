@@ -500,12 +500,33 @@ impl Publisher {
         }
     }
 
+    /// Update default_sample_duration from a tfhd box in a moof fragment.
+    /// Called on first fragment when the trex value was rejected as a placeholder.
+    pub fn update_sample_duration_from_fragment(&mut self, track_name: &str, data: &[u8]) {
+        let state = match self.tracks.get_mut(track_name) {
+            Some(s) => s,
+            None => return,
+        };
+        // Only update if we don't already have a valid value
+        if state.default_sample_duration.is_some() {
+            return;
+        }
+        if let Some(dur) = mp4::parse_tfhd_sample_duration(data) {
+            info!("Discovered default_sample_duration={} from tfhd for track '{}' (timescale={})",
+                dur, track_name, state.timescale);
+            state.default_sample_duration = Some(dur);
+        }
+    }
+
     /// Record video structure from a completed segment.
+    /// `first_bdt` and `last_bdt` are the baseMediaDecodeTime of the first and last
+    /// fragments, used to compute accurate media-time segment duration.
     pub fn record_segment_structure(
         &self,
         track_name: &str,
-        segment_duration_ms: u64,
         fragment_count: u32,
+        first_bdt: Option<u64>,
+        last_bdt: Option<u64>,
     ) {
         // Only track video segments
         let state = match self.tracks.get(track_name) {
@@ -513,15 +534,42 @@ impl Publisher {
             _ => return,
         };
 
-        let fragment_duration_ms = if fragment_count > 0 {
-            segment_duration_ms as f64 / fragment_count as f64
-        } else {
-            0.0
-        };
+        let timescale = state.timescale;
 
         // Compute FPS from timescale and default_sample_duration
-        let fps = if let Some(dur) = state.default_sample_duration {
-            if dur > 0 { state.timescale as f64 / dur as f64 } else { 0.0 }
+        let (fps, sample_dur) = if let Some(dur) = state.default_sample_duration {
+            if dur > 0 { (timescale as f64 / dur as f64, Some(dur)) } else { (0.0, None) }
+        } else {
+            (0.0, None)
+        };
+
+        // Compute segment duration from BDT span + one fragment duration
+        // first_bdt..last_bdt covers (fragment_count - 1) fragments,
+        // so total duration = (last_bdt - first_bdt + fragment_dur) / timescale * 1000
+        let segment_duration_ms = if let (Some(first), Some(last)) = (first_bdt, last_bdt) {
+            if last >= first && timescale > 0 {
+                let bdt_span_ticks = last - first;
+                // Add one fragment's worth of ticks to cover the last fragment's duration
+                let frag_ticks = if fragment_count > 1 {
+                    bdt_span_ticks / (fragment_count as u64 - 1)
+                } else if let Some(dur) = sample_dur {
+                    // Single fragment: estimate from sample duration × samples
+                    // For now just use the BDT span (which is 0 for 1 fragment)
+                    dur as u64
+                } else {
+                    0
+                };
+                let total_ticks = bdt_span_ticks + frag_ticks;
+                (total_ticks * 1000) / timescale as u64
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let fragment_duration_ms = if fragment_count > 0 && segment_duration_ms > 0 {
+            segment_duration_ms as f64 / fragment_count as f64
         } else {
             0.0
         };
@@ -531,7 +579,7 @@ impl Publisher {
             fragments_per_segment: fragment_count,
             fragment_duration_ms,
             fps,
-            timescale: state.timescale,
+            timescale,
             default_sample_duration: state.default_sample_duration,
         };
 

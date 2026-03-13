@@ -553,6 +553,35 @@ pub fn extract_audio_channels(data: &[u8]) -> Option<u16> {
     Some(u16::from_be_bytes([mp4a[16], mp4a[17]]))
 }
 
+/// Extract default_sample_duration from a moof fragment's tfhd box.
+/// This is the real per-fragment value, unlike the trex placeholder in the init segment.
+pub fn parse_tfhd_sample_duration(data: &[u8]) -> Option<u32> {
+    let moof = find_box_content(data, b"moof")?;
+    let traf = find_box_content(moof, b"traf")?;
+    let tfhd = find_box_content(traf, b"tfhd")?;
+    if tfhd.len() < 8 { return None; }
+
+    let tf_flags = u32::from_be_bytes([0, tfhd[1], tfhd[2], tfhd[3]]);
+
+    // default-sample-duration-present is flag 0x000008
+    if tf_flags & 0x000008 == 0 {
+        return None;
+    }
+
+    // Skip past: version+flags (4) + track_id (4)
+    let mut off = 4 + 4;
+    if tf_flags & 0x000001 != 0 { off += 8; } // base-data-offset
+    if tf_flags & 0x000002 != 0 { off += 4; } // sample-description-index
+    // Now at default-sample-duration
+    if off + 4 <= tfhd.len() {
+        let dur = u32::from_be_bytes([tfhd[off], tfhd[off+1], tfhd[off+2], tfhd[off+3]]);
+        if dur > 0 { Some(dur) } else { None }
+    } else {
+        None
+    }
+}
+
+/// Extract default_sample_duration from the trex box in the init segment (moov).
 pub fn extract_default_sample_duration(data: &[u8]) -> Option<u32> {
     let moov = find_box_content(data, b"moov")?;
     let mvex = find_box_content(moov, b"mvex")?;

@@ -7,6 +7,7 @@ pub use parser::{
     parse_track_id_from_init,
     extract_avcc_bytes, extract_esds_bytes,
     extract_video_dimensions, extract_audio_sample_rate, extract_audio_channels,
-    extract_default_sample_duration, rebase_decode_time, inject_trun_duration,
+    extract_default_sample_duration, parse_tfhd_sample_duration,
+    rebase_decode_time, inject_trun_duration,
     fragment_starts_with_idr,
 };
