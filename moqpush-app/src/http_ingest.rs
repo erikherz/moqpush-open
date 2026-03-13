@@ -140,6 +140,7 @@ async fn handle_request(
     req: Request<Incoming>,
     state: SharedState,
     first_init_notify: Arc<Notify>,
+    remote_addr: SocketAddr,
 ) -> Result<Response<String>, hyper::Error> {
     if req.method() != Method::PUT && req.method() != Method::POST {
         return Ok(Response::builder()
@@ -244,9 +245,13 @@ async fn handle_request(
                 match publisher.register_init(&handler, &data) {
                     Ok(real_name) => {
                         resolver.remap_track(&placeholder_name, &real_name);
-                        info!("Registered init for track '{}' from {}", real_name, path);
+                        info!("Registered init for track '{}' from {} (source: {})", real_name, path, remote_addr.ip());
                         if publisher.track_count() == 1 {
                             first_init_notify.notify_one();
+                        }
+                        if publisher.has_complete_catalog() {
+                            publisher.publish_msf_catalog();
+                            info!("Published MSF catalog ({} tracks) — source IP: {}", publisher.track_count(), remote_addr.ip());
                         }
                     }
                     Err(e) => error!("Failed to register init: {}", e),
@@ -277,9 +282,13 @@ async fn handle_request(
                     match publisher.register_init(&handler, &data) {
                         Ok(real_name) => {
                             resolver.remap_track(&placeholder_name, &real_name);
-                            info!("Registered init for track '{}' from {}", real_name, path);
+                            info!("Registered init for track '{}' from {} (source: {})", real_name, path, remote_addr.ip());
                             if publisher.track_count() == 1 {
                                 first_init_notify.notify_one();
+                            }
+                            if publisher.has_complete_catalog() {
+                                publisher.publish_msf_catalog();
+                                info!("Published MSF catalog ({} tracks) — source IP: {}", publisher.track_count(), remote_addr.ip());
                             }
                         }
                         Err(e) => error!("Failed to register init: {}", e),
@@ -340,7 +349,7 @@ pub async fn run(
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
-                let (stream, _remote_addr) = accept_result?;
+                let (stream, remote_addr) = accept_result?;
                 let io = TokioIo::new(stream);
                 let state = state.clone();
                 let notify = first_init_notify.clone();
@@ -349,7 +358,7 @@ pub async fn run(
                     let service = service_fn(move |req| {
                         let state = state.clone();
                         let notify = notify.clone();
-                        async move { handle_request(req, state, notify).await }
+                        async move { handle_request(req, state, notify, remote_addr).await }
                     });
 
                     if let Err(e) = http1::Builder::new()
