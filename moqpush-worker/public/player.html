@@ -17,7 +17,7 @@
     .status { text-align: center; }
     .status h2 { margin-bottom: 8px; }
     .status p { color: #888; font-size: 0.9em; }
-    .stats { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.88); padding: 14px 18px; border-radius: 4px; font-family: 'Roboto Mono', 'SF Mono', monospace; font-size: 12px; line-height: 2; display: none; z-index: 15; color: #fff; min-width: 380px; border: 1px solid rgba(255,255,255,0.1); pointer-events: none; }
+    .stats { position: absolute; top: 40px; left: 10px; background: rgba(0,0,0,0.88); padding: 14px 18px; border-radius: 4px; font-family: 'Roboto Mono', 'SF Mono', monospace; font-size: 12px; line-height: 2; display: none; z-index: 15; color: #fff; min-width: 380px; border: 1px solid rgba(255,255,255,0.1); pointer-events: none; }
     .stats.visible { display: block; }
     .stats-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.2); }
     .stats-row { display: flex; justify-content: space-between; }
@@ -141,9 +141,11 @@
         const connectUrl = `${relayUrl.replace(/\/+$/, '')}/`;
         let catalogJson = null;
 
-        const startFilter = urlParams.get('start') || 'largest_object';
+        const startFilter = urlParams.get('start') || 'latest_group';
+        const batchSize = parseInt(urlParams.get('batch')) || 1;
         const player = new window.MoqtPlayer(video, connectUrl, namespace, {
           startFilter,
+          batchSize,
           onStatus: (msg) => {
             statusTitle.textContent = msg;
             if (msg === 'Playing') {
@@ -178,30 +180,24 @@
           statsEl.innerHTML = `
             <div class="stats-title">Custom MoQT Player</div>
             ${row('Protocol', 'MoQ Transport / WebTransport')}
+            ${row('Catalog', 'MSF draft-00 / CMSF draft-00')}
             ${row('Relay', relayUrl.replace('https://', ''))}
             ${row('Namespace', namespace)}
             ${row('', '')}
             ${row('Video', `${s.width}x${s.height}`)}
-            ${row('Buffer Health', `${s.bufferHealth}s`)}
+            ${row('Video Codec', player.appender.codecs.video || 'pending')}
+            ${row('Audio Codec', player.appender.codecs.audio || 'pending')}
+            ${row('Dropped Frames', `${(video.getVideoPlaybackQuality?.() || {}).droppedVideoFrames || 0}`)}
             ${row('Frames Received', s.framesReceived)}
-            ${row('Data Received', `${(s.bytesReceived / 1024 / 1024).toFixed(1)} MB`)}
+            ${row('Buffer Health', `${s.bufferHealth}s`)}
             ${row('Session', `${uptime}s`)}
-            ${row('Player', 'Custom MoQT + MSE')}
             ${row('', '')}
-            ${tRow('QUIC Connect', t.connectMs)}
-            ${tRow('MSE Open', t.mseOpenMs)}
             ${tRow('SETUP', t.setupMs)}
-            ${tRow('Catalog SUB', t.catalogSubMs)}
-            ${tRow('Catalog SUB_OK', t.catalogOkMs)}
-            ${tRow('Catalog Data', t.catalogMs)}
-            ${tRow('Media SUBs', t.subscribeMs)}
+            ${tRow('Catalog', t.catalogMs)}
             ${tRow('1st Fragment', t.firstFragmentMs)}
-            ${tRow('Vid Appended', t.videoAppendMs)}
-            ${tRow('1st Decoded', t.firstDecodedMs)}
-            ${tRow('1st Blit', t.firstBlitMs)}
-            ${t.firstFragmentMs != null && t.videoAppendMs != null ? tRow('Frag→Append', t.videoAppendMs - t.firstFragmentMs) : ''}
-            ${t.videoAppendMs != null && t.firstDecodedMs != null ? tRow('Append→Decode', t.firstDecodedMs - t.videoAppendMs) : ''}
-            ${t.appendsBeforeDecode ? row('Appends→1st Dec', t.appendsBeforeDecode) : ''}
+            ${row('', '')}
+            ${row('Player', 'Custom MoQT + MSE')}
+            ${tRow('TTFF', t.firstDecodedMs)}
           `;
         }, 500);
 
@@ -310,6 +306,11 @@
 
         // Connect to Cloudflare relay
         const connectUrl = `${relayUrl.replace(/\/+$/, '')}/`;
+        let shakaTtff = null;
+        const ttffStart = Date.now();
+        video.addEventListener('loadeddata', () => {
+          if (shakaTtff === null) shakaTtff = Date.now() - ttffStart;
+        }, { once: true });
         await player.load(connectUrl, undefined, 'application/msf');
         overlay.classList.add('hidden');
         startTime = Date.now();
@@ -391,11 +392,14 @@
             ${row('Video Codec', activeVideo?.videoCodec || 'pending')}
             ${row('Audio Codec', activeAudio?.audioCodec || 'pending')}
             ${row('Dropped Frames', `${stats.droppedFrames}`)}
+            ${row('Frames Decoded', `${stats.decodedFrames}`)}
             ${row('', '')}
             ${row('Buffer Health', `${bufferHealth}s`)}
             ${row('Latency', `${(stats.liveLatency || 0).toFixed(2)}s`)}
             ${row('Session', `${uptime}s`)}
             ${row('Player', `Shaka ${shaka.Player.version || 'unknown'}`)}
+            ${row('', '')}
+            ${row('TTFF', shakaTtff !== null ? `${shakaTtff}ms` : 'pending')}
           `;
         }, 500);
 
