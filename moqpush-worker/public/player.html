@@ -99,16 +99,14 @@
     const useShaka = playerParam === 'shaka';
     document.getElementById('player-mode').textContent = useShaka ? 'Shaka Player' : 'Viper Player (MoQT + MSE)';
 
-    // ── Route to correct player ─────────────────────────────────────
+    // --- Route to correct player ---
     if (useShaka) {
       loadShakaPlayer();
     } else {
       loadCustomPlayer();
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // Custom MoQT Player (direct MSE injection, sub-second latency)
-    // ═════════════════════════════════════════════════════════════════
+    // --- Custom MoQT Player (direct MSE injection, sub-second latency) ---
 
     async function loadCustomPlayer() {
       try {
@@ -233,9 +231,7 @@
       }
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // Shaka Player (default, buffered playback)
-    // ═════════════════════════════════════════════════════════════════
+    // --- Shaka Player (buffered playback) ---
 
     async function loadShakaPlayer() {
       try {

@@ -9,7 +9,7 @@
  * both init segments have been received and parsed.
  */
 
-// ── MP4 box parsing ─────────────────────────────────────────────────
+// --- MP4 box parsing ---
 
 function findBox(data, start, end, type) {
   const t0 = type.charCodeAt(0), t1 = type.charCodeAt(1);
@@ -104,7 +104,7 @@ function parseEsdsCodec(data, start, end) {
   return `mp4a.${hex2(objectType)}.${audioObjectType}`;
 }
 
-// ── Helper: detect box types ────────────────────────────────────────
+// --- Helper: detect box types ---
 
 function hasMoov(data) {
   return findBox(data, 0, data.length, 'moov') !== null;
@@ -114,7 +114,7 @@ function hasMoof(data) {
   return findBox(data, 0, data.length, 'moof') !== null;
 }
 
-// ── FragmentAppender ────────────────────────────────────────────────
+// --- FragmentAppender ---
 
 class FragmentAppender {
   constructor() {

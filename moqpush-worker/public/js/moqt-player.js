@@ -10,9 +10,7 @@
  * Depends on fragment-appender.js (window.FragmentAppender, window.hasMoov, window.hasMoof)
  */
 
-// ═══════════════════════════════════════════════════════════════════
-// §1  QUIC Variable-Length Integer (RFC 9000 §16)
-// ═══════════════════════════════════════════════════════════════════
+// --- §1 QUIC Variable-Length Integer (RFC 9000 §16) ---
 
 function encodeVarint(v) {
   if (v < 0) throw new Error('negative varint');
@@ -32,9 +30,7 @@ function encodeVarint(v) {
   return b;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// §2  Stream Reader / Writer
-// ═══════════════════════════════════════════════════════════════════
+// --- §2 Stream Reader / Writer ---
 
 class MoqReader {
   #buf = new Uint8Array(0);
@@ -131,7 +127,7 @@ class MoqReader {
   }
 }
 
-// ── Message Builder (serializes to buffer) ──────────────────────────
+// --- Message Builder ---
 
 class MsgBuilder {
   #chunks = [];
@@ -174,7 +170,7 @@ class MsgBuilder {
   }
 }
 
-// ── Writer wrapper (writes to WebTransport stream) ──────────────────
+// --- Writer wrapper ---
 
 class MoqWriter {
   #writer;
@@ -210,9 +206,7 @@ class MoqWriter {
   close() { this.#writer.close().catch(() => {}); }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// §3  MoQT Protocol Constants (draft-14)
-// ═══════════════════════════════════════════════════════════════════
+// --- §3 MoQT Protocol Constants (draft-14) ---
 
 const MOQT_VERSION_DRAFT14 = 0xff00000e;
 const MOQT_LITE_V02        = 0xff0dad02;
@@ -240,9 +234,7 @@ const MSG_PUBLISH_DONE          = 0x0b;
 const MSG_PUBLISH               = 0x1d;
 const MSG_PUBLISH_ERROR         = 0x1f;
 
-// ═══════════════════════════════════════════════════════════════════
-// §4  MoqtPlayer
-// ═══════════════════════════════════════════════════════════════════
+// --- §4 MoqtPlayer ---
 
 class MoqtPlayer {
   constructor(video, relayUrl, namespace, opts = {}) {
@@ -368,7 +360,7 @@ class MoqtPlayer {
     console.log('[MoQT] Waiting for catalog...');
   }
 
-  // ── SETUP Exchange ────────────────────────────────────────────────
+  // --- SETUP Exchange ---
 
   async _doSetup() {
     // CLIENT_SETUP (draft-14 encoding)
@@ -414,7 +406,7 @@ class MoqtPlayer {
     }
   }
 
-  // ── SUBSCRIBE ─────────────────────────────────────────────────────
+  // --- SUBSCRIBE ---
 
   async _subscribe(trackName, priority) {
     const requestId = this.nextReqId;
@@ -447,7 +439,7 @@ class MoqtPlayer {
     });
   }
 
-  // ── Control Message Loop ──────────────────────────────────────────
+  // --- Control Message Loop ---
 
   async _readControlLoop() {
     try {
@@ -564,7 +556,7 @@ class MoqtPlayer {
     }
   }
 
-  // ── Data Stream Loop (incoming unidirectional streams) ────────────
+  // --- Data Stream Loop ---
 
   async _readDataStreams() {
     console.log('[MoQT] Data stream reader started, waiting for unidirectional streams...');
@@ -667,7 +659,7 @@ class MoqtPlayer {
     }
   }
 
-  // ── Frame Handler ─────────────────────────────────────────────────
+  // --- Frame Handler ---
 
   _onFrame(trackInfo, payload, groupId) {
     if (!trackInfo) return;
@@ -716,7 +708,7 @@ class MoqtPlayer {
     }
   }
 
-  // ── Catalog Handler ───────────────────────────────────────────────
+  // --- Catalog Handler ---
 
   async _onCatalog(payload) {
     try {
@@ -807,7 +799,7 @@ class MoqtPlayer {
     return bytes;
   }
 
-  // ── Buffer Trimming ───────────────────────────────────────────────
+  // --- Buffer Trimming ---
 
   _trimLoop() {
     setInterval(() => {
@@ -842,7 +834,7 @@ class MoqtPlayer {
     return b.length > 0 ? b.end(b.length - 1) : 0;
   }
 
-  // ── Play trigger ──────────────────────────────────────────────────
+  // --- Play trigger ---
 
   _triggerPlay() {
     if (this._playTriggered) return;
@@ -881,7 +873,7 @@ class MoqtPlayer {
     }
   }
 
-  // ── Timing ───────────────────────────────────────────────────────
+  // --- Timing ---
 
   _logTiming() {
     const t = this.timing;
@@ -935,7 +927,7 @@ class MoqtPlayer {
     };
   }
 
-  // ── Stats ─────────────────────────────────────────────────────────
+  // --- Stats ---
 
   getStats() {
     const b = this.video.buffered;
@@ -952,7 +944,7 @@ class MoqtPlayer {
     };
   }
 
-  // ── Cleanup ───────────────────────────────────────────────────────
+  // --- Cleanup ---
 
   destroy() {
     this.appender.destroy();
