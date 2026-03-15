@@ -238,14 +238,26 @@ export class PullerHub extends DurableObject<Env> {
   async alarm() {
     const now = Date.now();
     const pullers = this.getPullerWebSockets();
+    let evicted = false;
 
     // Ping connected pullers and evict stale ones
     for (const [node, entry] of pullers) {
       if (now - entry.attachment.lastPing > 60_000) {
         try { entry.ws.close(1000, "timeout"); } catch {}
+        evicted = true;
       } else {
-        try { entry.ws.send(JSON.stringify({ type: "ping" })); } catch {}
+        try {
+          entry.ws.send(JSON.stringify({ type: "ping" }));
+        } catch {
+          // Send failed — socket is dead, close it
+          try { entry.ws.close(1000, "send failed"); } catch {}
+          evicted = true;
+        }
       }
+    }
+
+    if (evicted) {
+      this.broadcastAdminStatus();
     }
 
     // Sync heartbeats to D1 for all connected pullers
