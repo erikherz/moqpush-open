@@ -14,9 +14,15 @@ interface PlayerTypeEntry {
   sessions: Map<string, PlayerSession>;
 }
 
+interface PublisherPrev {
+  bytes_published: number;
+  timestamp: number;
+}
+
 interface StatsEntry {
   publisher?: Record<string, any>;
   publisher_updated_at?: number;
+  publisher_prev?: PublisherPrev;
   players: Map<string, PlayerTypeEntry>; // keyed by player_type
 }
 
@@ -56,8 +62,20 @@ export class StatsHub extends DurableObject {
     }
 
     if (role === "publisher") {
+      const now = Date.now();
+      // Compute bitrate from bytes_published delta
+      if (entry.publisher_prev && data.bytes_published != null) {
+        const bytesDelta = data.bytes_published - entry.publisher_prev.bytes_published;
+        const timeDelta = (now - entry.publisher_prev.timestamp) / 1000; // seconds
+        if (timeDelta > 0 && bytesDelta >= 0) {
+          data.bitrate_mbps = (bytesDelta * 8) / (timeDelta * 1_000_000);
+        }
+      }
+      if (data.bytes_published != null) {
+        entry.publisher_prev = { bytes_published: data.bytes_published, timestamp: now };
+      }
       entry.publisher = data;
-      entry.publisher_updated_at = Date.now();
+      entry.publisher_updated_at = now;
     } else if (role === "player") {
       const playerType = data.player_type || "unknown";
       const sessionId = data.session_id || "default";

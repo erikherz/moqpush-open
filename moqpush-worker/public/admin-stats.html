@@ -126,6 +126,7 @@
         html += stat('pub-uptime', 'Uptime', fmtUptime(d.uptime_secs));
         html += stat('pub-tracks', 'Tracks', d.tracks ?? '-');
         html += stat('pub-published', 'Published', fmtBytes(d.bytes_published));
+        html += stat('pub-bitrate', 'Bitrate', d.bitrate_mbps != null ? d.bitrate_mbps.toFixed(2) + ' Mbps' : '-');
         html += stat('pub-frames', 'Frames', d.frames_sent != null ? d.frames_sent.toLocaleString() : '-');
         html += stat('pub-segments', 'Segments', d.segments_sent != null ? d.segments_sent.toLocaleString() : '-');
         html += stat('pub-resolution', 'Resolution', (d.video_width && d.video_height) ? d.video_width + 'x' + d.video_height : '-');
@@ -214,6 +215,7 @@
         updateStat(body, 'pub-uptime', fmtUptime(d.uptime_secs));
         updateStat(body, 'pub-tracks', d.tracks ?? '-');
         updateStat(body, 'pub-published', fmtBytes(d.bytes_published));
+        updateStat(body, 'pub-bitrate', d.bitrate_mbps != null ? d.bitrate_mbps.toFixed(2) + ' Mbps' : '-');
         updateStat(body, 'pub-frames', d.frames_sent != null ? d.frames_sent.toLocaleString() : '-');
         updateStat(body, 'pub-segments', d.segments_sent != null ? d.segments_sent.toLocaleString() : '-');
         updateStat(body, 'pub-resolution', (d.video_width && d.video_height) ? d.video_width + 'x' + d.video_height : '-');
@@ -366,8 +368,10 @@
         const totalViewers = hasPlayers ? Object.values(entry.players).reduce((sum, p) => sum + (p.viewer_count || 0), 0) : 0;
 
         const badges = card.querySelector(`#badges-${ns}`);
+        const pubBitrate = entry.publisher?.bitrate_mbps;
         const badgeHtml = `
           <span class="badge ${entry.publisher ? 'on' : 'off'}">PUB ${entry.publisher ? 'ON' : 'OFF'}</span>
+          ${pubBitrate != null ? `<span class="badge on">${pubBitrate.toFixed(1)} Mbps</span>` : ''}
           <span class="badge ${hasPlayers ? 'on' : 'off'}">${totalViewers} VIEWER${totalViewers !== 1 ? 'S' : ''}</span>
           ${activeNodes.length > 0 ? `<span class="badge ${warmNodes.length === activeNodes.length ? 'on' : 'off'}">${warmNodes.length}/${activeNodes.length} WARM</span>` : ''}
         `;
