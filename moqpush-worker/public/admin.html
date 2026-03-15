@@ -273,7 +273,7 @@
     }
 
     function updateLiveBadges() {
-      document.querySelectorAll('[data-ns]').forEach(el => {
+      document.querySelectorAll('[data-ns-name]').forEach(el => {
         const badge = el.querySelector('.live-badge');
         if (liveBroadcasts[el.dataset.ns]) {
           if (!badge) {
@@ -322,7 +322,7 @@
       const tbody = document.getElementById('namespaces-table');
       tbody.innerHTML = (data.namespaces || []).map(b => `
         <tr>
-          <td data-ns="${b.namespace}">
+          <td data-ns="${b.namespace}" data-ns-name>
             <a href="/${b.namespace}" style="color:#667eea;text-decoration:none">${b.namespace}</a>
           </td>
           <td>
