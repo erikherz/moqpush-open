@@ -45,6 +45,10 @@ export class PullerHub extends DurableObject<Env> {
       return Response.json(this.getStatus());
     }
 
+    if (request.method === "POST" && url.pathname === "/purge") {
+      return Response.json(this.purgeAllPullers());
+    }
+
     return new Response("Not found", { status: 404 });
   }
 
@@ -210,10 +214,24 @@ export class PullerHub extends DurableObject<Env> {
     return { sent };
   }
 
-  private getStatus(): { pullers: Record<string, any> } {
-    const result: Record<string, any> = {};
+  private purgeAllPullers(): { closed: string[] } {
+    const closed: string[] = [];
     const pullers = this.getPullerWebSockets();
     for (const [node, entry] of pullers) {
+      try { entry.ws.close(1000, "purged"); } catch {}
+      closed.push(node);
+    }
+    this.broadcastAdminStatus();
+    return { closed };
+  }
+
+  private getStatus(): { pullers: Record<string, any> } {
+    const result: Record<string, any> = {};
+    const now = Date.now();
+    const STALE_MS = 90_000; // hide pullers with no pong for 90s
+    const pullers = this.getPullerWebSockets();
+    for (const [node, entry] of pullers) {
+      if (now - entry.attachment.lastPing > STALE_MS) continue;
       result[node] = {
         node: entry.attachment.node,
         region: entry.attachment.region,

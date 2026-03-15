@@ -192,6 +192,13 @@ export default {
       await stopPullsForNamespace(body.namespace, env);
       return jsonResponse({ ok: true });
     }
+    if (path === '/api/admin/purge-pullers' && request.method === 'POST') {
+      const admin = await requireAdmin(request, env);
+      if (admin instanceof Response) return admin;
+      const stub = getPullerHub(env);
+      const res = await stub.fetch(new Request('https://do/purge', { method: 'POST' }));
+      return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json' } });
+    }
     if (path === '/api/admin/puller-secret' && request.method === 'GET') {
       const admin = await requireAdmin(request, env);
       if (admin instanceof Response) return admin;
