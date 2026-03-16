@@ -1,23 +1,24 @@
 //! Ad manager: loads pre-encoded CMAF ads from disk and provides them for insertion.
 //!
-//! Ad directory structure:
+//! Ad directory structure (multi-quality ABR):
 //!   ads/
 //!     my-ad/
-//!       video-init.mp4    (ftyp+moov for video)
-//!       audio-init.mp4    (ftyp+moov for audio)
-//!       video-001.m4s     (moof+mdat fragments, in order)
-//!       video-002.m4s
-//!       ...
-//!       audio-001.m4s
-//!       audio-002.m4s
-//!       ...
+//!       video-720-init.mp4     (ftyp+moov for 720p video)
+//!       video-720-00001.m4s    (moof+mdat fragments, sorted)
+//!       video-720-00002.m4s
+//!       video-480-init.mp4     (ftyp+moov for 480p video)
+//!       video-480-00001.m4s
+//!       video-240-init.mp4     (ftyp+moov for 240p video)
+//!       video-240-00001.m4s
+//!       audio-init.mp4         (ftyp+moov for audio)
+//!       audio-00001.m4s
 //!
 //! Init filenames must contain "init" and end in .mp4.
-//! Media filenames must end in .m4s. They are sorted lexicographically
-//! so zero-padded numbering (001, 002, ...) is recommended.
-//!
-//! Video and audio are distinguished by parsing the handler type from
-//! the init segment (hdlr box: "vide" or "soun").
+//! Media filenames must end in .m4s.
+//! Files are grouped by prefix (everything before the first digit or "init").
+//! Video vs audio is auto-detected from the init segment's handler type.
+//! Video tracks are keyed by resolution (e.g. "720", "480", "240") parsed
+//! from the filename prefix (video-720-*).
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
@@ -27,22 +28,35 @@ use tracing::{info, warn};
 
 use crate::mp4;
 
+/// A single video quality within an ad.
+#[derive(Clone)]
+pub struct AdVideoTrack {
+    /// Resolution label from filename (e.g. "720", "480", "240").
+    pub label: String,
+    /// Width from init segment.
+    pub width: u32,
+    /// Height from init segment.
+    pub height: u32,
+    /// Init segment (ftyp+moov).
+    pub init: Bytes,
+    /// Timescale from init segment.
+    pub timescale: u32,
+    /// Media fragments (moof+mdat), in playback order.
+    pub fragments: Vec<Bytes>,
+}
+
 /// A single loaded ad, ready for insertion.
 #[derive(Clone)]
 pub struct Ad {
     pub name: String,
-    /// Video init segment (ftyp+moov). None if ad has no video.
-    pub video_init: Option<Bytes>,
+    /// Video tracks keyed by resolution height (e.g. 240, 480, 720).
+    pub video_tracks: HashMap<u32, AdVideoTrack>,
     /// Audio init segment (ftyp+moov). None if ad has no audio.
     pub audio_init: Option<Bytes>,
-    /// Video media fragments (moof+mdat), in playback order.
-    pub video_fragments: Vec<Bytes>,
-    /// Audio media fragments (moof+mdat), in playback order.
-    pub audio_fragments: Vec<Bytes>,
-    /// Video timescale (from init segment).
-    pub video_timescale: u32,
     /// Audio timescale (from init segment).
     pub audio_timescale: u32,
+    /// Audio media fragments (moof+mdat), in playback order.
+    pub audio_fragments: Vec<Bytes>,
 }
 
 /// Manages all loaded ads.
@@ -86,8 +100,11 @@ impl AdManager {
 
             match self.load_ad(&path, &name) {
                 Ok(ad) => {
-                    info!("Loaded ad '{}': {} video frags, {} audio frags",
-                        name, ad.video_fragments.len(), ad.audio_fragments.len());
+                    let video_info: Vec<String> = ad.video_tracks.values()
+                        .map(|t| format!("{}p({} frags)", t.height, t.fragments.len()))
+                        .collect();
+                    info!("Loaded ad '{}': video=[{}], audio={} frags",
+                        name, video_info.join(", "), ad.audio_fragments.len());
                     self.ads.insert(name, ad);
                 }
                 Err(e) => {
@@ -101,14 +118,13 @@ impl AdManager {
     }
 
     fn load_ad(&self, dir: &Path, name: &str) -> Result<Ad> {
-        let mut video_init: Option<Bytes> = None;
-        let mut audio_init: Option<Bytes> = None;
-        let mut video_fragments: Vec<(String, Bytes)> = Vec::new();
-        let mut audio_fragments: Vec<(String, Bytes)> = Vec::new();
-        let mut video_timescale: u32 = 90000;
-        let mut audio_timescale: u32 = 48000;
+        // Group files by prefix. A prefix is everything before "init" or before
+        // the numeric segment number. E.g.:
+        //   "video-720-init.mp4"   → prefix "video-720-"
+        //   "video-720-00001.m4s"  → prefix "video-720-"
+        //   "audio-init.mp4"       → prefix "audio-"
+        //   "audio-00001.m4s"      → prefix "audio-"
 
-        // Collect all files
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
@@ -116,7 +132,16 @@ impl AdManager {
             .collect();
         files.sort();
 
-        // First pass: load init segments
+        // Collect init segments by prefix
+        struct InitInfo {
+            data: Vec<u8>,
+            handler: String, // "vide" or "soun"
+            width: u32,
+            height: u32,
+            timescale: u32,
+        }
+        let mut inits: HashMap<String, InitInfo> = HashMap::new();
+
         for path in &files {
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !filename.contains("init") || !filename.ends_with(".mp4") {
@@ -127,24 +152,27 @@ impl AdManager {
                 warn!("Init file {} has no moov box, skipping", path.display());
                 continue;
             }
-            let handler = mp4::parse_handler_type(&data)
-                .ok_or_else(|| anyhow!("No handler type in {}", path.display()))?;
+            let handler = match mp4::parse_handler_type(&data) {
+                Some(h) => h,
+                None => {
+                    warn!("No handler type in {}, skipping", path.display());
+                    continue;
+                }
+            };
             let timescale = mp4::parse_timescale(&data).unwrap_or(90000);
+            let (width, height) = mp4::extract_video_dimensions(&data).unwrap_or((0, 0));
 
-            match handler.as_str() {
-                "vide" => {
-                    video_timescale = timescale;
-                    video_init = Some(Bytes::from(data));
-                }
-                "soun" => {
-                    audio_timescale = timescale;
-                    audio_init = Some(Bytes::from(data));
-                }
-                other => warn!("Unknown handler '{}' in {}, skipping", other, path.display()),
-            }
+            // Extract prefix: everything up to and including the dash before "init"
+            let prefix = extract_prefix(filename);
+            info!("  Init: {} → prefix='{}' handler={} {}x{} ts={}",
+                filename, prefix, handler, width, height, timescale);
+
+            inits.insert(prefix, InitInfo { data, handler, width, height, timescale });
         }
 
-        // Second pass: load media fragments
+        // Collect media fragments by prefix
+        let mut frag_groups: HashMap<String, Vec<(String, Bytes)>> = HashMap::new();
+
         for path in &files {
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !filename.ends_with(".m4s") {
@@ -156,36 +184,74 @@ impl AdManager {
                 continue;
             }
 
-            // Determine video vs audio from filename prefix
-            let is_video = filename.starts_with("video") || filename.starts_with("Video");
-            let is_audio = filename.starts_with("audio") || filename.starts_with("Audio");
+            let prefix = extract_prefix(filename);
+            frag_groups.entry(prefix)
+                .or_default()
+                .push((filename.to_string(), Bytes::from(data)));
+        }
 
-            if is_video {
-                video_fragments.push((filename.to_string(), Bytes::from(data)));
-            } else if is_audio {
-                audio_fragments.push((filename.to_string(), Bytes::from(data)));
-            } else {
-                // Try to detect from track_id matching init segments
-                warn!("Can't determine type for {}, skipping (prefix with 'video-' or 'audio-')", filename);
+        // Sort fragments within each group
+        for frags in frag_groups.values_mut() {
+            frags.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+
+        // Build the Ad struct
+        let mut video_tracks: HashMap<u32, AdVideoTrack> = HashMap::new();
+        let mut audio_init: Option<Bytes> = None;
+        let mut audio_timescale: u32 = 48000;
+        let mut audio_fragments: Vec<Bytes> = Vec::new();
+
+        for (prefix, init_info) in &inits {
+            let frags: Vec<Bytes> = frag_groups.remove(prefix)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, d)| d)
+                .collect();
+
+            match init_info.handler.as_str() {
+                "vide" => {
+                    let height = init_info.height;
+                    let label = if height > 0 {
+                        format!("{}", height)
+                    } else {
+                        prefix.trim_end_matches('-').to_string()
+                    };
+                    video_tracks.insert(height, AdVideoTrack {
+                        label,
+                        width: init_info.width,
+                        height,
+                        init: Bytes::from(init_info.data.clone()),
+                        timescale: init_info.timescale,
+                        fragments: frags,
+                    });
+                }
+                "soun" => {
+                    audio_timescale = init_info.timescale;
+                    audio_init = Some(Bytes::from(init_info.data.clone()));
+                    audio_fragments = frags;
+                }
+                _ => {}
             }
         }
 
-        // Sort by filename to ensure correct order
-        video_fragments.sort_by(|a, b| a.0.cmp(&b.0));
-        audio_fragments.sort_by(|a, b| a.0.cmp(&b.0));
+        // Check for unmatched fragment groups (fragments with no init)
+        for (prefix, frags) in &frag_groups {
+            if !frags.is_empty() {
+                warn!("Ad '{}': {} fragments with prefix '{}' have no matching init segment",
+                    name, frags.len(), prefix);
+            }
+        }
 
-        if video_fragments.is_empty() && audio_fragments.is_empty() {
-            return Err(anyhow!("No media fragments found in {}", dir.display()));
+        if video_tracks.is_empty() && audio_fragments.is_empty() {
+            return Err(anyhow!("No media found in {}", dir.display()));
         }
 
         Ok(Ad {
             name: name.to_string(),
-            video_init,
+            video_tracks,
             audio_init,
-            video_fragments: video_fragments.into_iter().map(|(_, d)| d).collect(),
-            audio_fragments: audio_fragments.into_iter().map(|(_, d)| d).collect(),
-            video_timescale,
             audio_timescale,
+            audio_fragments,
         })
     }
 
@@ -198,4 +264,31 @@ impl AdManager {
     pub fn list(&self) -> Vec<&str> {
         self.ads.keys().map(|s| s.as_str()).collect()
     }
+}
+
+/// Extract the prefix from a filename — everything before "init" or before
+/// the first run of digits at the end.
+/// Examples:
+///   "video-720-init.mp4"   → "video-720-"
+///   "video-720-00001.m4s"  → "video-720-"
+///   "audio-init.mp4"       → "audio-"
+///   "audio-00001.m4s"      → "audio-"
+///   "video-init.mp4"       → "video-"
+///   "video-00001.m4s"      → "video-"
+fn extract_prefix(filename: &str) -> String {
+    // Strip extension
+    let base = if let Some(pos) = filename.rfind('.') {
+        &filename[..pos]
+    } else {
+        filename
+    };
+
+    // If contains "init", prefix is everything before "init"
+    if let Some(pos) = base.find("init") {
+        return base[..pos].to_string();
+    }
+
+    // Otherwise, strip trailing digits
+    let prefix = base.trim_end_matches(|c: char| c.is_ascii_digit());
+    prefix.to_string()
 }

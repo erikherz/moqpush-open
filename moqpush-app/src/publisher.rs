@@ -10,7 +10,7 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use moq_lite::{BroadcastProducer, Group, GroupProducer, Track, TrackProducer};
 use moq_mux::CatalogProducer;
@@ -642,55 +642,58 @@ impl Publisher {
     ///
     /// Returns the number of fragments published, or an error.
     pub fn play_ad(&mut self, ad: &Ad, use_ad_init: bool) -> Result<u32> {
-        info!("AD_INSERT: starting ad '{}' (video_frags={}, audio_frags={}, use_ad_init={})",
-            ad.name, ad.video_fragments.len(), ad.audio_fragments.len(), use_ad_init);
+        info!("AD_INSERT: starting ad '{}' (video_tracks={}, audio_frags={}, use_ad_init={})",
+            ad.name, ad.video_tracks.len(), ad.audio_fragments.len(), use_ad_init);
 
-        // Compute BDT offsets for timestamp continuity.
-        // For each track, the ad's first fragment BDT should continue from the
-        // last live BDT + one fragment duration.
+        // Compute BDT offsets for timestamp continuity per track.
         let mut bdt_offsets: HashMap<String, u64> = HashMap::new();
+        for (name, state) in self.tracks.iter() {
+            let last = state.last_bdt.unwrap_or(0);
+            let dur = state.last_frag_duration.unwrap_or(0);
+            let base = state.time_base.unwrap_or(0);
+            let offset = (last + dur).saturating_sub(base);
+            bdt_offsets.insert(name.clone(), offset);
+            info!("AD_INSERT: {} offset={} (last_bdt={}, dur={}, base={})",
+                name, offset, last, dur, base);
+        }
 
-        // Find video and audio track names
-        let video_track = self.tracks.iter()
-            .find(|(_, s)| s.track_type == TrackType::Video)
-            .map(|(n, _)| n.clone());
+        // Match ad video tracks to publisher video tracks by resolution.
+        // Build a map: publisher_track_name → &AdVideoTrack
+        let mut video_matches: Vec<(String, &crate::ad_manager::AdVideoTrack)> = Vec::new();
+        let publisher_video_tracks: Vec<(String, u32, u32)> = self.tracks.iter()
+            .filter(|(_, s)| s.track_type == TrackType::Video)
+            .map(|(n, _s)| {
+                // Get dimensions from stats or init segment
+                let width = self.init_segments.get(n)
+                    .and_then(|init| mp4::extract_video_dimensions(init))
+                    .map(|(w, _)| w)
+                    .unwrap_or(0);
+                let height = self.init_segments.get(n)
+                    .and_then(|init| mp4::extract_video_dimensions(init))
+                    .map(|(_, h)| h)
+                    .unwrap_or(0);
+                (n.clone(), width, height)
+            })
+            .collect();
+
+        for (track_name, _width, height) in &publisher_video_tracks {
+            if let Some(ad_track) = ad.video_tracks.get(height) {
+                info!("AD_INSERT: matched {}p ad video → publisher track '{}'", height, track_name);
+                video_matches.push((track_name.clone(), ad_track));
+            } else {
+                warn!("AD_INSERT: no {}p ad video found for publisher track '{}'", height, track_name);
+            }
+        }
+
+        // Find audio track
         let audio_track = self.tracks.iter()
             .find(|(_, s)| s.track_type == TrackType::Audio)
             .map(|(n, _)| n.clone());
 
-        // Calculate video BDT offset
-        if let Some(ref vt) = video_track {
-            if let Some(state) = self.tracks.get(vt) {
-                let last = state.last_bdt.unwrap_or(0);
-                let dur = state.last_frag_duration.unwrap_or(0);
-                let offset = last + dur;
-                // We need the offset relative to the time_base
-                let base = state.time_base.unwrap_or(0);
-                bdt_offsets.insert(vt.clone(), offset.saturating_sub(base));
-                info!("AD_INSERT: video offset = {} (last_bdt={}, dur={}, base={})",
-                    offset.saturating_sub(base), last, dur, base);
-            }
-        }
-
-        // Calculate audio BDT offset
-        if let Some(ref at) = audio_track {
-            if let Some(state) = self.tracks.get(at) {
-                let last = state.last_bdt.unwrap_or(0);
-                let dur = state.last_frag_duration.unwrap_or(0);
-                let offset = last + dur;
-                let base = state.time_base.unwrap_or(0);
-                bdt_offsets.insert(at.clone(), offset.saturating_sub(base));
-                info!("AD_INSERT: audio offset = {} (last_bdt={}, dur={}, base={})",
-                    offset.saturating_sub(base), last, dur, base);
-            }
-        }
-
         // If using ad init segments, update catalog
         if use_ad_init {
-            if let Some(ref init) = ad.video_init {
-                if let Some(ref vt) = video_track {
-                    self.init_segments.insert(vt.clone(), init.to_vec());
-                }
+            for (track_name, ad_track) in &video_matches {
+                self.init_segments.insert(track_name.clone(), ad_track.init.to_vec());
             }
             if let Some(ref init) = ad.audio_init {
                 if let Some(ref at) = audio_track {
@@ -701,7 +704,7 @@ impl Publisher {
             info!("AD_INSERT: published catalog with ad init segments");
         }
 
-        // Finish current live groups
+        // Finish current live groups on ALL tracks
         for (_name, state) in self.tracks.iter_mut() {
             if let Some(mut group) = state.group.take() {
                 let _ = group.finish();
@@ -710,69 +713,64 @@ impl Publisher {
 
         let mut total_frags: u32 = 0;
 
-        // Publish video ad fragments
-        if let Some(ref vt) = video_track {
-            let offset = *bdt_offsets.get(vt).unwrap_or(&0);
-            let default_dur = self.tracks.get(vt).and_then(|s| s.default_sample_duration);
+        // Publish video ad fragments for each matched quality
+        for (track_name, ad_track) in &video_matches {
+            let offset = *bdt_offsets.get(track_name).unwrap_or(&0);
+            let default_dur = self.tracks.get(track_name).and_then(|s| s.default_sample_duration);
 
-            // Each ad fragment goes into its own group (one group = one segment)
-            // But we batch all fragments into one group for simplicity
-            // (matching how live works: one group per HTTP PUT, multiple frags per group)
-            if !ad.video_fragments.is_empty() {
-                // Create a new group for the ad
-                if let Some(state) = self.tracks.get_mut(vt) {
-                    let group = state.track.append_group()
-                        .map_err(|e| anyhow!("failed to create ad video group: {}", e))?;
-                    state.group = Some(group);
-                }
+            if ad_track.fragments.is_empty() {
+                continue;
+            }
 
-                for frag in &ad.video_fragments {
-                    // Rebase ad fragment: ad BDTs start from 0, we add our offset
-                    let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
-                    // The ad fragment needs its BDT set to (offset + ad_bdt)
-                    // rebase_decode_time subtracts, so we need to compute what to subtract
-                    // to get (offset + ad_bdt): subtract = original_bdt - desired_bdt
-                    // But we can't add with rebase_decode_time (it only subtracts).
-                    // Instead, write the raw BDT as offset + ad_bdt using set_decode_time.
-                    let desired_bdt = offset + ad_bdt;
-                    let rebased = mp4::set_decode_time(frag, desired_bdt);
+            // Create a new group for the ad on this track
+            if let Some(state) = self.tracks.get_mut(track_name) {
+                let group = state.track.append_group()
+                    .map_err(|e| anyhow!("failed to create ad video group for '{}': {}", track_name, e))?;
+                state.group = Some(group);
+            }
 
-                    let frame_data = if let Some(dur) = default_dur {
-                        Bytes::from(mp4::inject_trun_duration(&rebased, dur))
-                    } else {
-                        Bytes::from(rebased)
-                    };
+            for frag in &ad_track.fragments {
+                let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
+                let desired_bdt = offset + ad_bdt;
+                let rebased = mp4::set_decode_time(frag, desired_bdt);
 
-                    if let Some(state) = self.tracks.get_mut(vt) {
-                        if let Some(ref mut group) = state.group {
-                            let len = frame_data.len() as u64;
-                            group.write_frame(frame_data)
-                                .map_err(|e| anyhow!("failed to write ad video frame: {}", e))?;
-                            self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
-                            self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
-                            total_frags += 1;
-                        }
-                    }
+                let frame_data = if let Some(dur) = default_dur {
+                    Bytes::from(mp4::inject_trun_duration(&rebased, dur))
+                } else {
+                    Bytes::from(rebased)
+                };
 
-                    // Track last BDT for the ad
-                    if let Some(state) = self.tracks.get_mut(vt) {
-                        let new_bdt = desired_bdt + state.time_base.unwrap_or(0);
-                        if let Some(prev) = state.last_bdt {
-                            if new_bdt > prev {
-                                state.last_frag_duration = Some(new_bdt - prev);
-                            }
-                        }
-                        state.last_bdt = Some(new_bdt);
+                if let Some(state) = self.tracks.get_mut(track_name) {
+                    if let Some(ref mut group) = state.group {
+                        let len = frame_data.len() as u64;
+                        group.write_frame(frame_data)
+                            .map_err(|e| anyhow!("failed to write ad frame for '{}': {}", track_name, e))?;
+                        self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
+                        self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
+                        total_frags += 1;
                     }
                 }
 
-                // Finish the ad video group
-                if let Some(state) = self.tracks.get_mut(vt) {
-                    if let Some(mut group) = state.group.take() {
-                        let _ = group.finish();
+                // Track last BDT
+                if let Some(state) = self.tracks.get_mut(track_name) {
+                    let new_bdt = desired_bdt + state.time_base.unwrap_or(0);
+                    if let Some(prev) = state.last_bdt {
+                        if new_bdt > prev {
+                            state.last_frag_duration = Some(new_bdt - prev);
+                        }
                     }
+                    state.last_bdt = Some(new_bdt);
                 }
             }
+
+            // Finish the ad group
+            if let Some(state) = self.tracks.get_mut(track_name) {
+                if let Some(mut group) = state.group.take() {
+                    let _ = group.finish();
+                }
+            }
+
+            info!("AD_INSERT: published {} video frags on '{}'", ad_track.fragments.len(), track_name);
         }
 
         // Publish audio ad fragments
@@ -825,28 +823,13 @@ impl Publisher {
                         let _ = group.finish();
                     }
                 }
+
+                info!("AD_INSERT: published {} audio frags on '{}'", ad.audio_fragments.len(), at);
             }
         }
 
-        // Restore live init segments in catalog if we changed them
         if use_ad_init {
-            // Restore original inits — we need to save them before the ad.
-            // For now, the caller should re-register or we accept the ad init stays.
-            // In practice, with pre-encoded matching ads, use_ad_init=false is the common path.
             info!("AD_INSERT: note — live init segments should be restored by next encoder init");
-        }
-
-        // Calculate the ad duration in each track's timescale for live BDT adjustment
-        // When live resumes, its BDTs will have advanced (encoder kept running).
-        // We need to adjust so the stream stays continuous.
-        for (track_name, state) in self.tracks.iter() {
-            let last = state.last_bdt.unwrap_or(0);
-            let base = state.time_base.unwrap_or(0);
-            let current_rebased = last.saturating_sub(base);
-            // The live encoder's BDT will have jumped ahead during the ad.
-            // We'll calculate the adjustment when the first live fragment arrives.
-            info!("AD_INSERT: {} last_rebased_bdt={} (will adjust on live resume)",
-                track_name, current_rebased);
         }
 
         self.ad_state = AdState::Live;
