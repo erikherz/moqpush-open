@@ -18,11 +18,11 @@ use moq_mux::CatalogProducer;
 use crate::ad_manager::Ad;
 use crate::mp4;
 
-/// Ad insertion state: currently unused since play_ad() is synchronous
-/// and holds the mutex for the duration. Scaffolded for future async ad playback.
+/// Ad insertion state.
 #[derive(Debug, Clone, PartialEq)]
 enum AdState {
     Live,
+    PlayingAd,
 }
 
 /// Video structure snapshot from the most recent segment.
@@ -383,6 +383,11 @@ impl Publisher {
         track_name: &str,
         data: &[u8],
     ) -> Result<()> {
+        // Drop live fragments while ad is playing
+        if self.ad_state == AdState::PlayingAd {
+            return Ok(());
+        }
+
         let state = self.tracks.get_mut(track_name)
             .ok_or_else(|| anyhow!("track not found: {}", track_name))?;
 
@@ -526,6 +531,9 @@ impl Publisher {
     /// Signal that a new HTTP PUT (segment) has started for this track.
     /// The next call to send_fragment() will create a new MoQ group.
     pub fn start_segment(&mut self, track_name: &str) {
+        if self.ad_state == AdState::PlayingAd {
+            return; // Drop live segments during ad playback
+        }
         if let Some(state) = self.tracks.get_mut(track_name) {
             state.new_segment = true;
             self.stats.segments_sent.fetch_add(1, Ordering::Relaxed);
@@ -814,7 +822,7 @@ impl Publisher {
             pace.max(10) // floor at 10ms
         };
 
-        self.ad_state = AdState::Live;
+        self.ad_state = AdState::PlayingAd;
         info!("AD_INSERT: prepared {} timeslots for ad '{}', pace={}ms", timeslots.len(), ad.name, pace_ms);
 
         Ok((timeslots, pace_ms))
@@ -853,6 +861,12 @@ impl Publisher {
             info!("AD_INSERT: restored live init segments and republished catalog");
         }
 
-        info!("AD_INSERT: ad groups finished");
+        self.ad_state = AdState::Live;
+        info!("AD_INSERT: ad groups finished, resuming live");
+    }
+
+    /// Returns true if an ad is currently playing (live fragments should be dropped).
+    pub fn is_ad_playing(&self) -> bool {
+        self.ad_state == AdState::PlayingAd
     }
 }
