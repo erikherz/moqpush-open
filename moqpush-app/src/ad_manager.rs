@@ -31,16 +31,10 @@ use crate::mp4;
 /// A single video quality within an ad.
 #[derive(Clone)]
 pub struct AdVideoTrack {
-    /// Resolution label from filename (e.g. "720", "480", "240").
-    pub label: String,
-    /// Width from init segment.
-    pub width: u32,
-    /// Height from init segment.
+    /// Height from init segment (used for matching to publisher tracks).
     pub height: u32,
     /// Init segment (ftyp+moov).
     pub init: Bytes,
-    /// Timescale from init segment.
-    pub timescale: u32,
     /// Media fragments (moof+mdat), in playback order.
     pub fragments: Vec<Bytes>,
 }
@@ -53,8 +47,6 @@ pub struct Ad {
     pub video_tracks: HashMap<u32, AdVideoTrack>,
     /// Audio init segment (ftyp+moov). None if ad has no audio.
     pub audio_init: Option<Bytes>,
-    /// Audio timescale (from init segment).
-    pub audio_timescale: u32,
     /// Audio media fragments (moof+mdat), in playback order.
     pub audio_fragments: Vec<Bytes>,
 }
@@ -136,9 +128,7 @@ impl AdManager {
         struct InitInfo {
             data: Vec<u8>,
             handler: String, // "vide" or "soun"
-            width: u32,
             height: u32,
-            timescale: u32,
         }
         let mut inits: HashMap<String, InitInfo> = HashMap::new();
 
@@ -159,15 +149,13 @@ impl AdManager {
                     continue;
                 }
             };
-            let timescale = mp4::parse_timescale(&data).unwrap_or(90000);
-            let (width, height) = mp4::extract_video_dimensions(&data).unwrap_or((0, 0));
+            let (_width, height) = mp4::extract_video_dimensions(&data).unwrap_or((0, 0));
 
-            // Extract prefix: everything up to and including the dash before "init"
             let prefix = extract_prefix(filename);
-            info!("  Init: {} → prefix='{}' handler={} {}x{} ts={}",
-                filename, prefix, handler, width, height, timescale);
+            info!("  Init: {} → prefix='{}' handler={} height={}",
+                filename, prefix, handler, height);
 
-            inits.insert(prefix, InitInfo { data, handler, width, height, timescale });
+            inits.insert(prefix, InitInfo { data, handler, height });
         }
 
         // Collect media fragments by prefix
@@ -198,7 +186,6 @@ impl AdManager {
         // Build the Ad struct
         let mut video_tracks: HashMap<u32, AdVideoTrack> = HashMap::new();
         let mut audio_init: Option<Bytes> = None;
-        let mut audio_timescale: u32 = 48000;
         let mut audio_fragments: Vec<Bytes> = Vec::new();
 
         for (prefix, init_info) in &inits {
@@ -211,22 +198,13 @@ impl AdManager {
             match init_info.handler.as_str() {
                 "vide" => {
                     let height = init_info.height;
-                    let label = if height > 0 {
-                        format!("{}", height)
-                    } else {
-                        prefix.trim_end_matches('-').to_string()
-                    };
                     video_tracks.insert(height, AdVideoTrack {
-                        label,
-                        width: init_info.width,
                         height,
                         init: Bytes::from(init_info.data.clone()),
-                        timescale: init_info.timescale,
                         fragments: frags,
                     });
                 }
                 "soun" => {
-                    audio_timescale = init_info.timescale;
                     audio_init = Some(Bytes::from(init_info.data.clone()));
                     audio_fragments = frags;
                 }
@@ -250,7 +228,6 @@ impl AdManager {
             name: name.to_string(),
             video_tracks,
             audio_init,
-            audio_timescale,
             audio_fragments,
         })
     }
