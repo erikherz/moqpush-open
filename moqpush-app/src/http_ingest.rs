@@ -393,31 +393,72 @@ async fn handle_ad_trigger(
         }
     };
 
-    // Play the ad
-    let mut guard = state.lock().await;
-    let (ref _resolver, ref mut publisher) = *guard;
-
-    match publisher.play_ad(&ad, use_ad_init) {
-        Ok(frags) => {
-            let json = serde_json::json!({
-                "ok": true,
-                "ad": ad_name,
-                "fragments_published": frags,
-            });
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/json")
-                .body(json.to_string())
-                .unwrap())
+    // Prepare the ad (compute offsets, rebase timestamps, open groups)
+    let timeslots = {
+        let mut guard = state.lock().await;
+        let (ref _resolver, ref mut publisher) = *guard;
+        match publisher.prepare_ad(&ad, use_ad_init) {
+            Ok(slots) => slots,
+            Err(e) => {
+                error!("Ad preparation failed: {}", e);
+                return Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(format!("Ad preparation failed: {}", e))
+                    .unwrap());
+            }
         }
-        Err(e) => {
-            error!("Ad insertion failed: {}", e);
-            Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(format!("Ad insertion failed: {}", e))
-                .unwrap())
+    };
+
+    // Publish fragments paced at real-time (~33ms per fragment for 30fps video).
+    // We lock the mutex briefly for each slot, allowing live ingest to interleave
+    // if needed (though live PUTs will queue behind each slot).
+    let total_slots = timeslots.len();
+    let mut total_frags: u32 = 0;
+    let pace_interval = std::time::Duration::from_millis(33); // ~30fps
+
+    for (i, slot) in timeslots.iter().enumerate() {
+        let slot_start = std::time::Instant::now();
+
+        {
+            let mut guard = state.lock().await;
+            let (ref _resolver, ref mut publisher) = *guard;
+            match publisher.publish_ad_slot(slot) {
+                Ok(count) => total_frags += count,
+                Err(e) => {
+                    warn!("Ad slot {} failed: {}", i, e);
+                    break;
+                }
+            }
+        }
+
+        // Pace: sleep for remainder of the interval
+        if i + 1 < total_slots {
+            let elapsed = slot_start.elapsed();
+            if elapsed < pace_interval {
+                tokio::time::sleep(pace_interval - elapsed).await;
+            }
         }
     }
+
+    // Finish ad groups
+    {
+        let mut guard = state.lock().await;
+        let (ref _resolver, ref mut publisher) = *guard;
+        publisher.finish_ad();
+    }
+
+    let json = serde_json::json!({
+        "ok": true,
+        "ad": ad_name,
+        "slots_published": total_slots,
+        "fragments_published": total_frags,
+    });
+    info!("AD_INSERT: ad '{}' complete — {} slots, {} fragments", ad_name, total_slots, total_frags);
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(json.to_string())
+        .unwrap())
 }
 
 pub async fn run(

@@ -641,8 +641,11 @@ impl Publisher {
     /// 4. Republishes live catalog and resumes
     ///
     /// Returns the number of fragments published, or an error.
-    pub fn play_ad(&mut self, ad: &Ad, use_ad_init: bool) -> Result<u32> {
-        info!("AD_INSERT: starting ad '{}' (video_tracks={}, audio_frags={}, use_ad_init={})",
+    /// Prepare ad for insertion: match tracks, compute offsets, update catalog.
+    /// Returns prepared fragment data grouped by timeslot for paced publishing.
+    /// Each timeslot contains all tracks' fragments for that time position.
+    pub fn prepare_ad(&mut self, ad: &Ad, use_ad_init: bool) -> Result<Vec<Vec<(String, Bytes)>>> {
+        info!("AD_INSERT: preparing ad '{}' (video_tracks={}, audio_frags={}, use_ad_init={})",
             ad.name, ad.video_tracks.len(), ad.audio_fragments.len(), use_ad_init);
 
         // Compute BDT offsets for timestamp continuity per track.
@@ -658,25 +661,19 @@ impl Publisher {
         }
 
         // Match ad video tracks to publisher video tracks by resolution.
-        // Build a map: publisher_track_name → &AdVideoTrack
         let mut video_matches: Vec<(String, &crate::ad_manager::AdVideoTrack)> = Vec::new();
-        let publisher_video_tracks: Vec<(String, u32, u32)> = self.tracks.iter()
+        let publisher_video_tracks: Vec<(String, u32)> = self.tracks.iter()
             .filter(|(_, s)| s.track_type == TrackType::Video)
             .map(|(n, _s)| {
-                // Get dimensions from stats or init segment
-                let width = self.init_segments.get(n)
-                    .and_then(|init| mp4::extract_video_dimensions(init))
-                    .map(|(w, _)| w)
-                    .unwrap_or(0);
                 let height = self.init_segments.get(n)
                     .and_then(|init| mp4::extract_video_dimensions(init))
                     .map(|(_, h)| h)
                     .unwrap_or(0);
-                (n.clone(), width, height)
+                (n.clone(), height)
             })
             .collect();
 
-        for (track_name, _width, height) in &publisher_video_tracks {
+        for (track_name, height) in &publisher_video_tracks {
             if let Some(ad_track) = ad.video_tracks.get(height) {
                 info!("AD_INSERT: matched {}p ad video → publisher track '{}'", height, track_name);
                 video_matches.push((track_name.clone(), ad_track));
@@ -685,7 +682,6 @@ impl Publisher {
             }
         }
 
-        // Find audio track
         let audio_track = self.tracks.iter()
             .find(|(_, s)| s.track_type == TrackType::Audio)
             .map(|(n, _)| n.clone());
@@ -711,25 +707,28 @@ impl Publisher {
             }
         }
 
-        let mut total_frags: u32 = 0;
+        // Prepare rebased fragments grouped by time slot.
+        // Each slot = one fragment position across all tracks.
+        let max_frags = video_matches.iter()
+            .map(|(_, t)| t.fragments.len())
+            .max()
+            .unwrap_or(0)
+            .max(ad.audio_fragments.len());
 
-        // Publish video ad fragments for each matched quality
-        for (track_name, ad_track) in &video_matches {
-            let offset = *bdt_offsets.get(track_name).unwrap_or(&0);
-            let default_dur = self.tracks.get(track_name).and_then(|s| s.default_sample_duration);
+        let mut timeslots: Vec<Vec<(String, Bytes)>> = Vec::with_capacity(max_frags);
 
-            if ad_track.fragments.is_empty() {
-                continue;
-            }
+        for i in 0..max_frags {
+            let mut slot: Vec<(String, Bytes)> = Vec::new();
 
-            // Create a new group for the ad on this track
-            if let Some(state) = self.tracks.get_mut(track_name) {
-                let group = state.track.append_group()
-                    .map_err(|e| anyhow!("failed to create ad video group for '{}': {}", track_name, e))?;
-                state.group = Some(group);
-            }
+            // Video fragments for this slot
+            for (track_name, ad_track) in &video_matches {
+                if i >= ad_track.fragments.len() {
+                    continue;
+                }
+                let frag = &ad_track.fragments[i];
+                let offset = *bdt_offsets.get(track_name).unwrap_or(&0);
+                let default_dur = self.tracks.get(track_name).and_then(|s| s.default_sample_duration);
 
-            for frag in &ad_track.fragments {
                 let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
                 let desired_bdt = offset + ad_bdt;
                 let rebased = mp4::set_decode_time(frag, desired_bdt);
@@ -740,52 +739,16 @@ impl Publisher {
                     Bytes::from(rebased)
                 };
 
-                if let Some(state) = self.tracks.get_mut(track_name) {
-                    if let Some(ref mut group) = state.group {
-                        let len = frame_data.len() as u64;
-                        group.write_frame(frame_data)
-                            .map_err(|e| anyhow!("failed to write ad frame for '{}': {}", track_name, e))?;
-                        self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
-                        self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
-                        total_frags += 1;
-                    }
-                }
-
-                // Track last BDT
-                if let Some(state) = self.tracks.get_mut(track_name) {
-                    let new_bdt = desired_bdt + state.time_base.unwrap_or(0);
-                    if let Some(prev) = state.last_bdt {
-                        if new_bdt > prev {
-                            state.last_frag_duration = Some(new_bdt - prev);
-                        }
-                    }
-                    state.last_bdt = Some(new_bdt);
-                }
+                slot.push((track_name.clone(), frame_data));
             }
 
-            // Finish the ad group
-            if let Some(state) = self.tracks.get_mut(track_name) {
-                if let Some(mut group) = state.group.take() {
-                    let _ = group.finish();
-                }
-            }
+            // Audio fragment for this slot
+            if let Some(ref at) = audio_track {
+                if i < ad.audio_fragments.len() {
+                    let frag = &ad.audio_fragments[i];
+                    let offset = *bdt_offsets.get(at).unwrap_or(&0);
+                    let default_dur = self.tracks.get(at).and_then(|s| s.default_sample_duration);
 
-            info!("AD_INSERT: published {} video frags on '{}'", ad_track.fragments.len(), track_name);
-        }
-
-        // Publish audio ad fragments
-        if let Some(ref at) = audio_track {
-            let offset = *bdt_offsets.get(at).unwrap_or(&0);
-            let default_dur = self.tracks.get(at).and_then(|s| s.default_sample_duration);
-
-            if !ad.audio_fragments.is_empty() {
-                if let Some(state) = self.tracks.get_mut(at) {
-                    let group = state.track.append_group()
-                        .map_err(|e| anyhow!("failed to create ad audio group: {}", e))?;
-                    state.group = Some(group);
-                }
-
-                for frag in &ad.audio_fragments {
                     let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
                     let desired_bdt = offset + ad_bdt;
                     let rebased = mp4::set_decode_time(frag, desired_bdt);
@@ -796,45 +759,62 @@ impl Publisher {
                         Bytes::from(rebased)
                     };
 
-                    if let Some(state) = self.tracks.get_mut(at) {
-                        if let Some(ref mut group) = state.group {
-                            let len = frame_data.len() as u64;
-                            group.write_frame(frame_data)
-                                .map_err(|e| anyhow!("failed to write ad audio frame: {}", e))?;
-                            self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
-                            self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
-                            total_frags += 1;
-                        }
-                    }
-
-                    if let Some(state) = self.tracks.get_mut(at) {
-                        let new_bdt = desired_bdt + state.time_base.unwrap_or(0);
-                        if let Some(prev) = state.last_bdt {
-                            if new_bdt > prev {
-                                state.last_frag_duration = Some(new_bdt - prev);
-                            }
-                        }
-                        state.last_bdt = Some(new_bdt);
-                    }
+                    slot.push((at.clone(), frame_data));
                 }
+            }
 
+            timeslots.push(slot);
+        }
+
+        // Open groups on all tracks for the ad
+        for (track_name, _) in &video_matches {
+            if let Some(state) = self.tracks.get_mut(track_name) {
+                let group = state.track.append_group()
+                    .map_err(|e| anyhow!("failed to create ad group for '{}': {}", track_name, e))?;
+                state.group = Some(group);
+            }
+        }
+        if let Some(ref at) = audio_track {
+            if !ad.audio_fragments.is_empty() {
                 if let Some(state) = self.tracks.get_mut(at) {
-                    if let Some(mut group) = state.group.take() {
-                        let _ = group.finish();
-                    }
+                    let group = state.track.append_group()
+                        .map_err(|e| anyhow!("failed to create ad audio group: {}", e))?;
+                    state.group = Some(group);
                 }
-
-                info!("AD_INSERT: published {} audio frags on '{}'", ad.audio_fragments.len(), at);
             }
         }
 
-        if use_ad_init {
-            info!("AD_INSERT: note — live init segments should be restored by next encoder init");
-        }
-
         self.ad_state = AdState::Live;
-        info!("AD_INSERT: ad '{}' complete, {} total fragments published", ad.name, total_frags);
+        info!("AD_INSERT: prepared {} timeslots for ad '{}'", timeslots.len(), ad.name);
 
-        Ok(total_frags)
+        Ok(timeslots)
+    }
+
+    /// Publish one timeslot of ad fragments (call this with pacing from async context).
+    pub fn publish_ad_slot(&mut self, slot: &[(String, Bytes)]) -> Result<u32> {
+        let mut count: u32 = 0;
+        for (track_name, frame_data) in slot {
+            if let Some(state) = self.tracks.get_mut(track_name) {
+                if let Some(ref mut group) = state.group {
+                    let len = frame_data.len() as u64;
+                    group.write_frame(frame_data.clone())
+                        .map_err(|e| anyhow!("failed to write ad frame for '{}': {}", track_name, e))?;
+                    self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
+                    self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    /// Finish ad groups on all tracks (call after all timeslots published).
+    pub fn finish_ad(&mut self) {
+        for (_name, state) in self.tracks.iter_mut() {
+            if let Some(mut group) = state.group.take() {
+                let _ = group.finish();
+            }
+        }
+        info!("AD_INSERT: ad groups finished");
     }
 }
