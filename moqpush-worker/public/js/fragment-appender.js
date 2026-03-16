@@ -143,16 +143,28 @@ class FragmentAppender {
     const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
     this.initSegments[type] = buf;
 
-    const codec = parseCodecFromInitSegment(buf);
-    if (codec) {
-      this.codecs[type] = codec;
-      console.log(`[MSE] ${type} init: ${buf.byteLength}B, codec=${codec}`);
+    const newCodec = parseCodecFromInitSegment(buf);
+    const oldCodec = this.codecs[type];
+    if (newCodec) {
+      this.codecs[type] = newCodec;
+      console.log(`[MSE] ${type} init: ${buf.byteLength}B, codec=${newCodec}`);
     } else {
       this.codecs[type] = type === 'video' ? 'avc1.4d401f' : 'mp4a.40.2';
       console.warn(`[MSE] ${type} init: codec detection failed, fallback=${this.codecs[type]}`);
     }
 
     if (this.initialized && this.sourceBuffers[type]) {
+      // If codec changed, call changeType() before appending new init
+      const effectiveNewCodec = newCodec || this.codecs[type];
+      if (oldCodec && effectiveNewCodec !== oldCodec) {
+        const mime = `${type}/mp4; codecs="${effectiveNewCodec}"`;
+        try {
+          this.sourceBuffers[type].changeType(mime);
+          console.log(`[MSE] ${type} changeType: ${oldCodec} → ${effectiveNewCodec}`);
+        } catch (e) {
+          console.error(`[MSE] ${type} changeType failed:`, e);
+        }
+      }
       this.queues[type].push(buf);
       this._processQueue(type);
       return;

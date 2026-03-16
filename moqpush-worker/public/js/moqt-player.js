@@ -720,8 +720,30 @@ class MoqtPlayer {
       console.log('[MoQT] Catalog received:', catalog);
       this.onCatalog(catalog);
 
-      if (this.catalogReceived) return; // Only subscribe to tracks once
+      // On subsequent catalogs, check for changed init segments (ad insertion)
+      if (this.catalogReceived) {
+        const tracks = catalog.tracks || [];
+        for (const track of tracks) {
+          if (!track.initData || !track.name) continue;
+          const type = track.name.includes('audio') ? 'audio' : track.name.includes('video') ? 'video' : null;
+          if (!type) continue;
+          // Compare with stored initData — if different, push new init to appender
+          const newInitB64 = track.initData;
+          if (this._lastInitData && this._lastInitData[type] !== newInitB64) {
+            try {
+              const initBytes = this._base64ToUint8Array(newInitB64);
+              console.log(`[MoQT] Init CHANGED mid-stream: ${track.name} (${initBytes.byteLength}B)`);
+              this.appender.setInitSegment(type, initBytes);
+              this._lastInitData[type] = newInitB64;
+            } catch (e) {
+              console.warn(`[MoQT] Failed to update initData for ${track.name}:`, e);
+            }
+          }
+        }
+        return;
+      }
       this.catalogReceived = true;
+      this._lastInitData = {};
 
       const tracks = catalog.tracks || [];
 
@@ -763,6 +785,7 @@ class MoqtPlayer {
             const initBytes = this._base64ToUint8Array(track.initData);
             console.log(`[MoQT] Init from catalog: ${track.name} (${initBytes.byteLength}B)`);
             this.appender.setInitSegment(type, initBytes);
+            this._lastInitData[type] = track.initData;
           } catch (e) {
             console.warn(`[MoQT] Failed to decode initData for ${track.name}:`, e);
           }
