@@ -794,15 +794,16 @@ impl Publisher {
         // Each fragment's duration = BDT delta between consecutive fragments.
         let pace_ms = {
             let mut pace: u64 = 1000; // default 1s
-            for (_, ad_track) in &video_matches {
+            for (track_name, ad_track) in &video_matches {
                 if ad_track.fragments.len() >= 2 {
                     let bdt0 = mp4::parse_base_decode_time(&ad_track.fragments[0]).unwrap_or(0);
                     let bdt1 = mp4::parse_base_decode_time(&ad_track.fragments[1]).unwrap_or(0);
+                    let timescale = self.tracks.get(track_name)
+                        .map(|s| s.timescale)
+                        .unwrap_or(15360);
+                    info!("AD_INSERT: pace calc: {} bdt0={} bdt1={} delta={} timescale={}",
+                        track_name, bdt0, bdt1, bdt1.saturating_sub(bdt0), timescale);
                     if bdt1 > bdt0 {
-                        let timescale = self.tracks.iter()
-                            .find(|(_, s)| s.track_type == TrackType::Video)
-                            .map(|(_, s)| s.timescale)
-                            .unwrap_or(15360);
                         pace = ((bdt1 - bdt0) * 1000) / timescale as u64;
                         if pace > 0 {
                             break;
