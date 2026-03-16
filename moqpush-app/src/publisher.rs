@@ -124,6 +124,8 @@ pub struct Publisher {
     pub stats: Arc<PublisherStats>,
     /// Ad insertion state (for future async ad playback).
     ad_state: AdState,
+    /// Saved live init segments during ad playback (restored in finish_ad).
+    saved_live_inits: Option<HashMap<String, Vec<u8>>>,
 }
 
 impl Publisher {
@@ -143,6 +145,7 @@ impl Publisher {
             first_video_at: None,
             stats,
             ad_state: AdState::Live,
+            saved_live_inits: None,
         }
     }
 
@@ -686,8 +689,11 @@ impl Publisher {
             .find(|(_, s)| s.track_type == TrackType::Audio)
             .map(|(n, _)| n.clone());
 
-        // If using ad init segments, update catalog
+        // If using ad init segments, save live inits and update catalog
         if use_ad_init {
+            // Save current live init segments for restoration after ad
+            self.saved_live_inits = Some(self.init_segments.clone());
+
             for (track_name, ad_track) in &video_matches {
                 self.init_segments.insert(track_name.clone(), ad_track.init.to_vec());
             }
@@ -808,13 +814,21 @@ impl Publisher {
         Ok(count)
     }
 
-    /// Finish ad groups on all tracks (call after all timeslots published).
+    /// Finish ad groups on all tracks and restore live init segments.
     pub fn finish_ad(&mut self) {
         for (_name, state) in self.tracks.iter_mut() {
             if let Some(mut group) = state.group.take() {
                 let _ = group.finish();
             }
         }
+
+        // Restore live init segments and republish catalog
+        if let Some(live_inits) = self.saved_live_inits.take() {
+            self.init_segments = live_inits;
+            self.publish_msf_catalog();
+            info!("AD_INSERT: restored live init segments and republished catalog");
+        }
+
         info!("AD_INSERT: ad groups finished");
     }
 }
