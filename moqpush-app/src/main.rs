@@ -9,6 +9,7 @@ use tracing::{error, info, warn};
 use moq_lite::Origin;
 use moq_mux::CatalogProducer;
 
+mod ad_manager;
 mod http_ingest;
 mod mp4;
 mod publisher;
@@ -41,6 +42,10 @@ struct Args {
     /// Test mode: accept and print incoming data without connecting to worker or relay
     #[arg(long)]
     test: bool,
+
+    /// Directory containing pre-encoded ad assets for ad insertion
+    #[arg(long)]
+    ad_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -126,14 +131,31 @@ async fn main() -> Result<()> {
         publisher.set_target_latency_ms(latency);
     }
 
+    // Load ad manager if --ad-dir is specified
+    let ad_mgr = if let Some(ref ad_dir) = args.ad_dir {
+        match ad_manager::AdManager::load(std::path::Path::new(ad_dir)) {
+            Ok(mgr) => {
+                info!("Ad manager loaded: {} ads from {}", mgr.list().len(), ad_dir);
+                Some(Arc::new(mgr))
+            }
+            Err(e) => {
+                warn!("Failed to load ads from {}: {} (continuing without ads)", ad_dir, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let first_init_notify = Arc::new(Notify::new());
 
     // Spawn HTTP ingest server
     info!("HTTP ingest starting on port {}", args.port);
     let http_shutdown = shutdown_rx.clone();
     let http_notify = first_init_notify.clone();
+    let http_ad_mgr = ad_mgr.clone();
     tokio::spawn(async move {
-        if let Err(e) = http_ingest::run(args.port, publisher, http_notify, http_shutdown).await {
+        if let Err(e) = http_ingest::run(args.port, publisher, http_notify, http_shutdown, http_ad_mgr).await {
             error!("HTTP ingest error: {}", e);
         }
     });

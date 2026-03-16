@@ -20,6 +20,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{watch, Mutex, Notify};
 use tracing::{debug, error, info, warn};
 
+use crate::ad_manager::AdManager;
 use crate::mp4::{
     has_moof, has_moov, parse_handler_type, parse_moof_mdat_ranges,
     fragment_starts_with_idr, parse_base_decode_time,
@@ -135,21 +136,44 @@ impl TrackResolver {
 }
 
 type SharedState = Arc<Mutex<(TrackResolver, Publisher)>>;
+type SharedAdManager = Option<Arc<AdManager>>;
 
 async fn handle_request(
     req: Request<Incoming>,
     state: SharedState,
     first_init_notify: Arc<Notify>,
     remote_addr: SocketAddr,
+    ad_mgr: SharedAdManager,
 ) -> Result<Response<String>, hyper::Error> {
-    if req.method() != Method::PUT && req.method() != Method::POST {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+
+    // Admin ad insertion endpoint: POST /admin/ad?name=my-ad
+    if path == "/admin/ad" && method == Method::POST {
+        return handle_ad_trigger(req, state, ad_mgr).await;
+    }
+
+    // Admin endpoint: GET /admin/ads — list loaded ads
+    if path == "/admin/ads" && method == Method::GET {
+        let ads = if let Some(ref mgr) = ad_mgr {
+            mgr.list().iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+        let json = serde_json::json!({ "ads": ads });
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(json.to_string())
+            .unwrap());
+    }
+
+    if method != Method::PUT && method != Method::POST {
         return Ok(Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .body("Method not allowed".to_string())
             .unwrap());
     }
-
-    let path = req.uri().path().to_string();
 
     // Discard manifests
     if path.ends_with(".mpd") {
@@ -323,11 +347,85 @@ async fn handle_request(
         .unwrap())
 }
 
+async fn handle_ad_trigger(
+    req: Request<Incoming>,
+    state: SharedState,
+    ad_mgr: SharedAdManager,
+) -> Result<Response<String>, hyper::Error> {
+    let ad_mgr = match ad_mgr {
+        Some(ref mgr) => mgr,
+        None => {
+            return Ok(Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body("No ad directory configured (use --ad-dir)".to_string())
+                .unwrap());
+        }
+    };
+
+    // Parse query params
+    let query = req.uri().query().unwrap_or("");
+    let params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect();
+
+    let ad_name = match params.get("name") {
+        Some(n) => n.clone(),
+        None => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Missing 'name' query parameter".to_string())
+                .unwrap());
+        }
+    };
+
+    let use_ad_init = params.get("use_init")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
+    let ad = match ad_mgr.get(&ad_name) {
+        Some(a) => a.clone(),
+        None => {
+            let available = ad_mgr.list().join(", ");
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(format!("Ad '{}' not found. Available: {}", ad_name, available))
+                .unwrap());
+        }
+    };
+
+    // Play the ad
+    let mut guard = state.lock().await;
+    let (ref _resolver, ref mut publisher) = *guard;
+
+    match publisher.play_ad(&ad, use_ad_init) {
+        Ok(frags) => {
+            let json = serde_json::json!({
+                "ok": true,
+                "ad": ad_name,
+                "fragments_published": frags,
+            });
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(json.to_string())
+                .unwrap())
+        }
+        Err(e) => {
+            error!("Ad insertion failed: {}", e);
+            Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Ad insertion failed: {}", e))
+                .unwrap())
+        }
+    }
+}
+
 pub async fn run(
     port: u16,
     publisher: Publisher,
     first_init_notify: Arc<Notify>,
     mut shutdown: watch::Receiver<bool>,
+    ad_mgr: SharedAdManager,
 ) -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(addr).await?;
@@ -364,12 +462,14 @@ pub async fn run(
                 let io = TokioIo::new(stream);
                 let state = state.clone();
                 let notify = first_init_notify.clone();
+                let ad_mgr = ad_mgr.clone();
 
                 tokio::spawn(async move {
                     let service = service_fn(move |req| {
                         let state = state.clone();
                         let notify = notify.clone();
-                        async move { handle_request(req, state, notify, remote_addr).await }
+                        let ad_mgr = ad_mgr.clone();
+                        async move { handle_request(req, state, notify, remote_addr, ad_mgr).await }
                     });
 
                     if let Err(e) = http1::Builder::new()
