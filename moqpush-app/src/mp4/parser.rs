@@ -806,7 +806,8 @@ fn rewrite_trun_in_fragment(
     new_trun_content.push(((new_flags >> 16) & 0xff) as u8);
     new_trun_content.push(((new_flags >> 8) & 0xff) as u8);
     new_trun_content.push((new_flags & 0xff) as u8);
-    new_trun_content.extend_from_slice(&trun_content[4..4+header_size-4]);
+    let header_end = std::cmp::min(header_size, trun_content.len());
+    new_trun_content.extend_from_slice(&trun_content[4..header_end]);
 
     let samples_start = header_size;
     for s in 0..sample_count as usize {
