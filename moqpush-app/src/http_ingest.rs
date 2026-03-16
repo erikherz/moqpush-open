@@ -394,11 +394,11 @@ async fn handle_ad_trigger(
     };
 
     // Prepare the ad (compute offsets, rebase timestamps, open groups)
-    let timeslots = {
+    let (timeslots, pace_ms) = {
         let mut guard = state.lock().await;
         let (ref _resolver, ref mut publisher) = *guard;
         match publisher.prepare_ad(&ad, use_ad_init) {
-            Ok(slots) => slots,
+            Ok(result) => result,
             Err(e) => {
                 error!("Ad preparation failed: {}", e);
                 return Ok(Response::builder()
@@ -409,12 +409,11 @@ async fn handle_ad_trigger(
         }
     };
 
-    // Publish fragments paced at real-time (~33ms per fragment for 30fps video).
-    // We lock the mutex briefly for each slot, allowing live ingest to interleave
-    // if needed (though live PUTs will queue behind each slot).
+    // Publish fragments paced at real-time rate derived from fragment BDT deltas.
     let total_slots = timeslots.len();
     let mut total_frags: u32 = 0;
-    let pace_interval = std::time::Duration::from_millis(33); // ~30fps
+    let pace_interval = std::time::Duration::from_millis(pace_ms);
+    info!("AD_INSERT: publishing {} slots at {}ms pace", total_slots, pace_ms);
 
     for (i, slot) in timeslots.iter().enumerate() {
         let slot_start = std::time::Instant::now();

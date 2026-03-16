@@ -645,9 +645,9 @@ impl Publisher {
     ///
     /// Returns the number of fragments published, or an error.
     /// Prepare ad for insertion: match tracks, compute offsets, update catalog.
-    /// Returns prepared fragment data grouped by timeslot for paced publishing.
-    /// Each timeslot contains all tracks' fragments for that time position.
-    pub fn prepare_ad(&mut self, ad: &Ad, use_ad_init: bool) -> Result<Vec<Vec<(String, Bytes)>>> {
+    /// Returns (timeslots, pace_ms) — prepared fragment data grouped by timeslot,
+    /// and the recommended pacing interval in milliseconds between slots.
+    pub fn prepare_ad(&mut self, ad: &Ad, use_ad_init: bool) -> Result<(Vec<Vec<(String, Bytes)>>, u64)> {
         info!("AD_INSERT: preparing ad '{}' (video_tracks={}, audio_frags={}, use_ad_init={})",
             ad.name, ad.video_tracks.len(), ad.audio_fragments.len(), use_ad_init);
 
@@ -790,10 +790,33 @@ impl Publisher {
             }
         }
 
-        self.ad_state = AdState::Live;
-        info!("AD_INSERT: prepared {} timeslots for ad '{}'", timeslots.len(), ad.name);
+        // Compute pacing interval from the first video track's BDT deltas.
+        // Each fragment's duration = BDT delta between consecutive fragments.
+        let pace_ms = {
+            let mut pace: u64 = 1000; // default 1s
+            for (_, ad_track) in &video_matches {
+                if ad_track.fragments.len() >= 2 {
+                    let bdt0 = mp4::parse_base_decode_time(&ad_track.fragments[0]).unwrap_or(0);
+                    let bdt1 = mp4::parse_base_decode_time(&ad_track.fragments[1]).unwrap_or(0);
+                    if bdt1 > bdt0 {
+                        let timescale = self.tracks.iter()
+                            .find(|(_, s)| s.track_type == TrackType::Video)
+                            .map(|(_, s)| s.timescale)
+                            .unwrap_or(15360);
+                        pace = ((bdt1 - bdt0) * 1000) / timescale as u64;
+                        if pace > 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+            pace.max(10) // floor at 10ms
+        };
 
-        Ok(timeslots)
+        self.ad_state = AdState::Live;
+        info!("AD_INSERT: prepared {} timeslots for ad '{}', pace={}ms", timeslots.len(), ad.name, pace_ms);
+
+        Ok((timeslots, pace_ms))
     }
 
     /// Publish one timeslot of ad fragments (call this with pacing from async context).
