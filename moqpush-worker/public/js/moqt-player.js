@@ -720,14 +720,15 @@ class MoqtPlayer {
       console.log('[MoQT] Catalog received:', catalog);
       this.onCatalog(catalog);
 
-      // On subsequent catalogs, check for changed init segments (ad insertion)
+      // On subsequent catalogs, check for changed init segments (ad insertion).
+      // Only update tracks we're actually subscribed to.
       if (this.catalogReceived) {
         const tracks = catalog.tracks || [];
         for (const track of tracks) {
           if (!track.initData || !track.name) continue;
-          const type = track.name.includes('audio') ? 'audio' : track.name.includes('video') ? 'video' : null;
-          if (!type) continue;
-          // Compare with stored initData — if different, push new init to appender
+          // Only process tracks we're subscribed to
+          if (!this._subscribedTracks || !this._subscribedTracks[track.name]) continue;
+          const type = this._subscribedTracks[track.name];
           const newInitB64 = track.initData;
           if (this._lastInitData && this._lastInitData[type] !== newInitB64) {
             try {
@@ -744,6 +745,7 @@ class MoqtPlayer {
       }
       this.catalogReceived = true;
       this._lastInitData = {};
+      this._subscribedTracks = {}; // track.name → 'video'|'audio'
 
       const tracks = catalog.tracks || [];
 
@@ -796,6 +798,7 @@ class MoqtPlayer {
       this.timing.subscribeStart = performance.now();
       await Promise.all(selected.map(async (track) => {
         const type = track === selectedVideo ? 'video' : 'audio';
+        this._subscribedTracks[track.name] = type;
         const priority = type === 'video' ? 128 : 64;
         try {
           const alias = await this._subscribe(track.name, priority);

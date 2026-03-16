@@ -154,16 +154,12 @@ class FragmentAppender {
     }
 
     if (this.initialized && this.sourceBuffers[type]) {
-      // If codec changed, call changeType() before appending new init
+      // If codec changed, queue a changeType operation before the new init
       const effectiveNewCodec = newCodec || this.codecs[type];
       if (oldCodec && effectiveNewCodec !== oldCodec) {
         const mime = `${type}/mp4; codecs="${effectiveNewCodec}"`;
-        try {
-          this.sourceBuffers[type].changeType(mime);
-          console.log(`[MSE] ${type} changeType: ${oldCodec} → ${effectiveNewCodec}`);
-        } catch (e) {
-          console.error(`[MSE] ${type} changeType failed:`, e);
-        }
+        // Push a changeType marker — _processQueue will handle it
+        this.queues[type].push({ _changeType: mime, _oldCodec: oldCodec, _newCodec: effectiveNewCodec });
       }
       this.queues[type].push(buf);
       this._processQueue(type);
@@ -271,6 +267,20 @@ class FragmentAppender {
     if (this.errored) { queue.length = 0; return; }
 
     const data = queue.shift();
+
+    // Handle changeType marker (queued by setInitSegment when codec changes)
+    if (data && data._changeType) {
+      try {
+        sb.changeType(data._changeType);
+        console.log(`[MSE] ${type} changeType: ${data._oldCodec} → ${data._newCodec}`);
+      } catch (e) {
+        console.error(`[MSE] ${type} changeType failed:`, e);
+      }
+      // changeType is synchronous when sb is idle — process next item immediately
+      this._processQueue(type);
+      return;
+    }
+
     try {
       if (this.onAppend) this.onAppend(type, data);
       sb.appendBuffer(data);
