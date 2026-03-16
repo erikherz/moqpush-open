@@ -781,7 +781,7 @@ fn rewrite_trun_in_fragment(
     let trun_end = std::cmp::min(trun_off + trun_size, fragment.len());
     if trun_end <= trun_off + 8 { return fragment.to_vec(); }
     let trun_content = &fragment[trun_off+8..trun_end];
-    if trun_content.len() < 4 { return fragment.to_vec(); }
+    if trun_content.len() < 8 { return fragment.to_vec(); }
 
     let flags = u32::from_be_bytes([0, trun_content[1], trun_content[2], trun_content[3]]);
     if flags & 0x100 != 0 { return fragment.to_vec(); }
@@ -826,10 +826,13 @@ fn rewrite_trun_in_fragment(
 
     let size_delta = new_trun.len() as i64 - trun_size as i64;
 
+    let trun_end_off = std::cmp::min(trun_off + trun_size, fragment.len());
     let mut result = Vec::with_capacity((fragment.len() as i64 + size_delta) as usize);
     result.extend_from_slice(&fragment[..trun_off]);
     result.extend_from_slice(&new_trun);
-    result.extend_from_slice(&fragment[trun_off+trun_size..]);
+    if trun_end_off < fragment.len() {
+        result.extend_from_slice(&fragment[trun_end_off..]);
+    }
 
     let new_moof_size = (moof_size as i64 + size_delta) as u32;
     result[moof_off..moof_off+4].copy_from_slice(&new_moof_size.to_be_bytes());
