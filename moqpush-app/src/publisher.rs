@@ -309,10 +309,8 @@ impl Publisher {
 
         self.stats.track_count.store(self.tracks.len() as u32, Ordering::Relaxed);
 
-        // Only publish catalog once we have both video and audio tracks.
-        // Publishing an incomplete catalog (video-only) causes Shaka to set up
-        // MSE without an audio SourceBuffer, and it won't add one later.
-        if self.video_count > 0 && self.audio_count > 0 {
+        // Only publish catalog once we have all expected tracks.
+        if self.has_complete_catalog() {
             self.publish_msf_catalog();
         } else {
             let expected = match (self.expected_video, self.expected_audio) {
