@@ -279,13 +279,14 @@ class FragmentAppender {
     // Handle changeType marker (queued by setInitSegment when codec/init changes)
     if (data && data._changeType) {
       try {
-        sb.abort();
+        // changeType() resets the parser state per MSE spec.
+        // Do NOT call abort() — it clears timestampOffset and can
+        // interfere with the init segment append that follows.
         sb.changeType(data._changeType);
-        console.log(`[MSE] ${type} abort+changeType: ${data._oldCodec} → ${data._newCodec}`);
+        console.log(`[MSE] ${type} changeType: ${data._oldCodec} → ${data._newCodec}`);
       } catch (e) {
         console.error(`[MSE] ${type} changeType failed:`, e);
       }
-      // changeType is synchronous when sb is idle — process next item immediately
       this._processQueue(type);
       return;
     }
