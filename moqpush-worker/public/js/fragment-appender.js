@@ -154,18 +154,15 @@ class FragmentAppender {
     }
 
     if (this.initialized && this.sourceBuffers[type]) {
-      // Always call changeType when init bytes differ — even if the codec string
-      // is the same, the decoder config (SPS/PPS, AudioSpecificConfig) may differ
-      // between encoders, requiring a full decoder reinit.
+      // Just queue the new init segment — MSE handles re-initialization
+      // when a new moov is appended, even without changeType.
+      // Only call changeType if the codec STRING actually changes.
       const effectiveNewCodec = newCodec || this.codecs[type];
-      const initChanged = this._lastInitBytes && this._lastInitBytes[type] &&
-        buf.byteLength !== this._lastInitBytes[type].byteLength;
-      if (oldCodec && (effectiveNewCodec !== oldCodec || initChanged)) {
+      if (oldCodec && effectiveNewCodec !== oldCodec) {
         const mime = `${type}/mp4; codecs="${effectiveNewCodec}"`;
-        this.queues[type].push({ _changeType: mime, _oldCodec: oldCodec || effectiveNewCodec, _newCodec: effectiveNewCodec });
+        this.queues[type].push({ _changeType: mime, _oldCodec: oldCodec, _newCodec: effectiveNewCodec });
+        console.log(`[MSE] ${type} codec change queued: ${oldCodec} → ${effectiveNewCodec}`);
       }
-      if (!this._lastInitBytes) this._lastInitBytes = {};
-      this._lastInitBytes[type] = buf;
       this.queues[type].push(buf);
       this._processQueue(type);
       return;
