@@ -422,11 +422,16 @@ async fn handle_ad_trigger(
             }
         }
 
-        // Pace all slots (including init slot 0) to give the relay time to forward each group
+        // Pace slots: init slot gets a short delay (100ms), media slots get full pacing
         if i + 1 < total_slots {
+            let delay = if i == 0 {
+                std::time::Duration::from_millis(100)
+            } else {
+                pace_interval
+            };
             let elapsed = slot_start.elapsed();
-            if elapsed < pace_interval {
-                tokio::time::sleep(pace_interval - elapsed).await;
+            if elapsed < delay {
+                tokio::time::sleep(delay - elapsed).await;
             }
         }
     }

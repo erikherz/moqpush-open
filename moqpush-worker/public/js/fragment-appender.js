@@ -154,22 +154,16 @@ class FragmentAppender {
     }
 
     if (this.initialized && this.sourceBuffers[type]) {
-      // Just queue the new init segment — MSE handles re-initialization
-      // when a new moov is appended, even without changeType.
-      // Only call changeType if the codec STRING actually changes.
+      // Only call changeType if the codec string actually changes
       const effectiveNewCodec = newCodec || this.codecs[type];
       if (oldCodec && effectiveNewCodec !== oldCodec) {
         const mime = `${type}/mp4; codecs="${effectiveNewCodec}"`;
         this.queues[type].push({ _changeType: mime, _oldCodec: oldCodec, _newCodec: effectiveNewCodec });
-        console.log(`[MSE] ${type} codec change queued: ${oldCodec} → ${effectiveNewCodec}`);
       }
       this.queues[type].push(buf);
       this._processQueue(type);
       return;
     }
-
-    if (!this._lastInitBytes) this._lastInitBytes = {};
-    this._lastInitBytes[type] = buf;
 
     if (this.codecs.video && this.codecs.audio && !this.initialized) {
       this._autoInit().catch(e => console.error('[MSE] autoInit error:', e));
