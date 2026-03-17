@@ -677,16 +677,19 @@ impl Publisher {
         info!("AD_INSERT: preparing ad '{}' (video_tracks={}, audio_frags={})",
             ad.name, ad.video_tracks.len(), ad.audio_fragments.len());
 
-        // Compute BDT offsets for timestamp continuity per track.
-        let mut bdt_offsets: HashMap<String, u64> = HashMap::new();
+        // Compute BDT offsets in seconds (f64) for timescale-independent continuity.
+        // These will be converted to ad timescale when building each slot.
+        let mut bdt_offset_secs: HashMap<String, f64> = HashMap::new();
         for (name, state) in self.tracks.iter() {
             let last = state.last_bdt.unwrap_or(0);
             let dur = state.last_frag_duration.unwrap_or(0);
             let base = state.time_base.unwrap_or(0);
-            let offset = (last + dur).saturating_sub(base);
-            bdt_offsets.insert(name.clone(), offset);
-            info!("AD_INSERT: {} offset={} (last_bdt={}, dur={}, base={})",
-                name, offset, last, dur, base);
+            let offset_ticks = (last + dur).saturating_sub(base);
+            let ts = state.timescale.max(1) as f64;
+            let offset_secs = offset_ticks as f64 / ts;
+            bdt_offset_secs.insert(name.clone(), offset_secs);
+            info!("AD_INSERT: {} offset={:.3}s (last_bdt={}, dur={}, base={}, timescale={})",
+                name, offset_secs, last, dur, base, state.timescale);
         }
 
         // Match ad video tracks to publisher video tracks by resolution.
@@ -757,11 +760,13 @@ impl Publisher {
                     continue;
                 }
                 let frag = &ad_track.fragments[i];
-                let offset = *bdt_offsets.get(track_name).unwrap_or(&0);
+                let offset_secs = *bdt_offset_secs.get(track_name).unwrap_or(&0.0);
+                let ad_ts = ad_track.timescale.max(1) as f64;
+                let offset_ticks = (offset_secs * ad_ts).round() as u64;
                 let default_dur = self.tracks.get(track_name).and_then(|s| s.default_sample_duration);
 
                 let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
-                let desired_bdt = offset + ad_bdt;
+                let desired_bdt = offset_ticks + ad_bdt;
                 let rebased = mp4::set_decode_time(frag, desired_bdt);
 
                 let frame_data = if let Some(dur) = default_dur {
@@ -776,11 +781,13 @@ impl Publisher {
             if let Some(ref at) = audio_track {
                 if i < ad.audio_fragments.len() {
                     let frag = &ad.audio_fragments[i];
-                    let offset = *bdt_offsets.get(at).unwrap_or(&0);
+                    let offset_secs = *bdt_offset_secs.get(at).unwrap_or(&0.0);
+                    let ad_audio_ts = ad.audio_timescale.max(1) as f64;
+                    let offset_ticks = (offset_secs * ad_audio_ts).round() as u64;
                     let default_dur = self.tracks.get(at).and_then(|s| s.default_sample_duration);
 
                     let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
-                    let desired_bdt = offset + ad_bdt;
+                    let desired_bdt = offset_ticks + ad_bdt;
                     let rebased = mp4::set_decode_time(frag, desired_bdt);
 
                     let frame_data = if let Some(dur) = default_dur {
@@ -814,20 +821,19 @@ impl Publisher {
             }
         }
 
-        // Compute pacing interval from the first video track's BDT deltas.
+        // Compute pacing interval from the first ad video track's BDT deltas.
+        // Uses the AD's timescale (not the live track's timescale).
         let pace_ms = {
             let mut pace: u64 = 1000; // default 1s
-            for (track_name, ad_track) in &video_matches {
+            for (_track_name, ad_track) in &video_matches {
                 if ad_track.fragments.len() >= 2 {
                     let bdt0 = mp4::parse_base_decode_time(&ad_track.fragments[0]).unwrap_or(0);
                     let bdt1 = mp4::parse_base_decode_time(&ad_track.fragments[1]).unwrap_or(0);
-                    let timescale = self.tracks.get(track_name)
-                        .map(|s| s.timescale)
-                        .unwrap_or(15360);
-                    info!("AD_INSERT: pace calc: {} bdt0={} bdt1={} delta={} timescale={}",
-                        track_name, bdt0, bdt1, bdt1.saturating_sub(bdt0), timescale);
+                    let ad_ts = ad_track.timescale.max(1);
+                    info!("AD_INSERT: pace calc: bdt0={} bdt1={} delta={} ad_timescale={}",
+                        bdt0, bdt1, bdt1.saturating_sub(bdt0), ad_ts);
                     if bdt1 > bdt0 {
-                        pace = ((bdt1 - bdt0) * 1000) / timescale as u64;
+                        pace = ((bdt1 - bdt0) * 1000) / ad_ts as u64;
                         if pace > 0 {
                             break;
                         }

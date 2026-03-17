@@ -33,6 +33,8 @@ use crate::mp4;
 pub struct AdVideoTrack {
     /// Height from init segment (used for matching to publisher tracks).
     pub height: u32,
+    /// Timescale from init segment (for BDT offset conversion).
+    pub timescale: u32,
     /// Init segment (ftyp+moov).
     pub init: Bytes,
     /// Media fragments (moof+mdat), in playback order.
@@ -47,6 +49,8 @@ pub struct Ad {
     pub video_tracks: HashMap<u32, AdVideoTrack>,
     /// Audio init segment (ftyp+moov). None if ad has no audio.
     pub audio_init: Option<Bytes>,
+    /// Audio timescale from init segment.
+    pub audio_timescale: u32,
     /// Audio media fragments (moof+mdat), in playback order.
     pub audio_fragments: Vec<Bytes>,
 }
@@ -129,6 +133,7 @@ impl AdManager {
             data: Vec<u8>,
             handler: String, // "vide" or "soun"
             height: u32,
+            timescale: u32,
         }
         let mut inits: HashMap<String, InitInfo> = HashMap::new();
 
@@ -149,13 +154,14 @@ impl AdManager {
                     continue;
                 }
             };
+            let timescale = mp4::parse_timescale(&data).unwrap_or(90000);
             let (_width, height) = mp4::extract_video_dimensions(&data).unwrap_or((0, 0));
 
             let prefix = extract_prefix(filename);
-            info!("  Init: {} → prefix='{}' handler={} height={}",
-                filename, prefix, handler, height);
+            info!("  Init: {} → prefix='{}' handler={} height={} timescale={}",
+                filename, prefix, handler, height, timescale);
 
-            inits.insert(prefix, InitInfo { data, handler, height });
+            inits.insert(prefix, InitInfo { data, handler, height, timescale });
         }
 
         // Collect media fragments by prefix
@@ -186,6 +192,7 @@ impl AdManager {
         // Build the Ad struct
         let mut video_tracks: HashMap<u32, AdVideoTrack> = HashMap::new();
         let mut audio_init: Option<Bytes> = None;
+        let mut audio_timescale: u32 = 48000;
         let mut audio_fragments: Vec<Bytes> = Vec::new();
 
         for (prefix, init_info) in &inits {
@@ -200,11 +207,13 @@ impl AdManager {
                     let height = init_info.height;
                     video_tracks.insert(height, AdVideoTrack {
                         height,
+                        timescale: init_info.timescale,
                         init: Bytes::from(init_info.data.clone()),
                         fragments: frags,
                     });
                 }
                 "soun" => {
+                    audio_timescale = init_info.timescale;
                     audio_init = Some(Bytes::from(init_info.data.clone()));
                     audio_fragments = frags;
                 }
@@ -228,6 +237,7 @@ impl AdManager {
             name: name.to_string(),
             video_tracks,
             audio_init,
+            audio_timescale,
             audio_fragments,
         })
     }
