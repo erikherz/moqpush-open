@@ -422,8 +422,8 @@ async fn handle_ad_trigger(
             }
         }
 
-        // Pace: slot 0 is init segments (send immediately), slots 1+ are media (paced)
-        if i > 0 && i + 1 < total_slots {
+        // Pace all slots (including init slot 0) to give the relay time to forward each group
+        if i + 1 < total_slots {
             let elapsed = slot_start.elapsed();
             if elapsed < pace_interval {
                 tokio::time::sleep(pace_interval - elapsed).await;
