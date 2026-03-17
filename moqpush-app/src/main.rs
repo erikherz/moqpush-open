@@ -272,7 +272,17 @@ async fn main() -> Result<()> {
                 break;
             }
             _ = transport_interval.tick() => {
-                *pub_stats.transport.lock().unwrap() = Some(session.stats());
+                let t = session.stats();
+                *pub_stats.transport.lock().unwrap() = Some(serde_json::json!({
+                    "rtt_ms": t.rtt.map(|d| d.as_secs_f64() * 1000.0),
+                    "bytes_sent": t.bytes_sent,
+                    "bytes_received": t.bytes_received,
+                    "bytes_lost": t.bytes_lost,
+                    "packets_sent": t.packets_sent,
+                    "packets_received": t.packets_received,
+                    "packets_lost": t.packets_lost,
+                    "estimated_send_rate_mbps": t.estimated_send_rate.map(|r| r as f64 / 1e6),
+                }));
             }
         }
     }
@@ -444,18 +454,6 @@ async fn run_stats_loop(
         let transport = stats.transport.lock().unwrap().clone();
         let video_structure = stats.video_structure.lock().unwrap().clone();
 
-        // Build transport stats JSON
-        let transport_json = transport.map(|t| serde_json::json!({
-            "rtt_ms": t.rtt.map(|d| d.as_secs_f64() * 1000.0),
-            "bytes_sent": t.bytes_sent,
-            "bytes_received": t.bytes_received,
-            "bytes_lost": t.bytes_lost,
-            "packets_sent": t.packets_sent,
-            "packets_received": t.packets_received,
-            "packets_lost": t.packets_lost,
-            "estimated_send_rate_mbps": t.estimated_send_rate.map(|r| r as f64 / 1e6),
-        }));
-
         // Push stats every second
         let _ = client
             .post(format!("{}/api/stats", worker_url))
@@ -473,7 +471,7 @@ async fn run_stats_loop(
                 "video_codec": if video_codec.is_empty() { None } else { Some(video_codec) },
                 "audio_codec": if audio_codec.is_empty() { None } else { Some(audio_codec) },
                 "catalog": catalog,
-                "transport": transport_json,
+                "transport": transport,
                 "video_structure": video_structure.map(|vs| serde_json::json!({
                     "segment_duration_ms": vs.segment_duration_ms,
                     "fragments_per_segment": vs.fragments_per_segment,

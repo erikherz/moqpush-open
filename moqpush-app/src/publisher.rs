@@ -49,7 +49,7 @@ pub struct PublisherStats {
     /// Latest catalog JSON with initData stripped out.
     pub catalog_json: std::sync::Mutex<Option<serde_json::Value>>,
     /// Transport-level stats (QUIC/WebTransport), updated periodically.
-    pub transport: std::sync::Mutex<Option<moq_lite::TransportStats>>,
+    pub transport: std::sync::Mutex<Option<serde_json::Value>>,
     /// Video structure from the latest completed segment.
     pub video_structure: std::sync::Mutex<Option<VideoStructure>>,
 }
