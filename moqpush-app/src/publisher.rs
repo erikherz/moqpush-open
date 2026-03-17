@@ -900,8 +900,4 @@ impl Publisher {
         info!("AD_INSERT: ad finished, live init segments sent, resuming live");
     }
 
-    /// Returns true if an ad is currently playing (live fragments should be dropped).
-    pub fn is_ad_playing(&self) -> bool {
-        self.ad_state == AdState::PlayingAd
-    }
 }
