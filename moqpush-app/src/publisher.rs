@@ -120,6 +120,9 @@ pub struct Publisher {
     target_latency_ms: Option<u64>,
     /// When the first video track was registered (for audio-wait timeout).
     first_video_at: Option<std::time::Instant>,
+    /// Expected track counts from --tracks flag (e.g. 3v1a).
+    expected_video: Option<u32>,
+    expected_audio: Option<u32>,
     /// Shared stats counters readable from the stats loop.
     pub stats: Arc<PublisherStats>,
     /// Ad insertion state (for future async ad playback).
@@ -143,6 +146,8 @@ impl Publisher {
             time_origin: None,
             target_latency_ms: None,
             first_video_at: None,
+            expected_video: None,
+            expected_audio: None,
             stats,
             ad_state: AdState::Live,
             saved_live_inits: None,
@@ -151,6 +156,11 @@ impl Publisher {
 
     pub fn set_target_latency_ms(&mut self, ms: u64) {
         self.target_latency_ms = Some(ms);
+    }
+
+    pub fn set_expected_tracks(&mut self, video: u32, audio: u32) {
+        self.expected_video = Some(video);
+        self.expected_audio = Some(audio);
     }
 
     pub fn register_init(&mut self, handler_type: &str, init_data: &[u8]) -> Result<String> {
@@ -308,8 +318,12 @@ impl Publisher {
         if self.video_count > 0 && self.audio_count > 0 {
             self.publish_msf_catalog();
         } else {
-            info!("Deferring catalog publish until both video and audio tracks registered (v={} a={})",
-                self.video_count, self.audio_count);
+            let expected = match (self.expected_video, self.expected_audio) {
+                (Some(ev), Some(ea)) => format!("expected {}v{}a", ev, ea),
+                _ => "need video+audio".to_string(),
+            };
+            info!("Deferring catalog publish ({}, have {}v{}a)",
+                expected, self.video_count, self.audio_count);
         }
 
         Ok(track_name)
@@ -630,9 +644,17 @@ impl Publisher {
         self.tracks.len()
     }
 
-    /// Returns true once both video and audio tracks have been registered,
-    /// or after 5 seconds if only video tracks exist (audio-less encoder).
+    /// Returns true once all expected tracks have been registered.
+    /// With --tracks, waits for the exact counts (e.g. 3v1a).
+    /// Without --tracks, waits for any video + audio, or video-only after 5s timeout.
     pub fn has_complete_catalog(&self) -> bool {
+        if let (Some(ev), Some(ea)) = (self.expected_video, self.expected_audio) {
+            let video_ready = self.video_count >= ev;
+            let audio_ready = if ea > 0 { self.audio_count >= ea } else { true };
+            return video_ready && audio_ready;
+        }
+
+        // Default behavior: any video + any audio
         if self.video_count > 0 && self.audio_count > 0 {
             return true;
         }

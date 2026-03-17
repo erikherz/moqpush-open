@@ -39,6 +39,11 @@ struct Args {
     #[arg(long)]
     target_latency: Option<u64>,
 
+    /// Expected track counts before publishing catalog, e.g. "3v1a" for 3 video + 1 audio.
+    /// Without this, the catalog publishes as soon as any video + audio init arrives.
+    #[arg(long)]
+    tracks: Option<String>,
+
     /// Test mode: accept and print incoming data without connecting to worker or relay
     #[arg(long)]
     test: bool,
@@ -46,6 +51,36 @@ struct Args {
     /// Directory containing pre-encoded ad assets for ad insertion
     #[arg(long)]
     ad_dir: Option<String>,
+}
+
+/// Parse a track spec like "3v1a" into (video_count, audio_count).
+fn parse_track_spec(spec: &str) -> Result<(u32, u32)> {
+    let spec = spec.to_lowercase();
+    let mut video = None;
+    let mut audio = None;
+    let mut num_buf = String::new();
+
+    for c in spec.chars() {
+        match c {
+            '0'..='9' => num_buf.push(c),
+            'v' => {
+                video = Some(num_buf.parse::<u32>().unwrap_or(1));
+                num_buf.clear();
+            }
+            'a' => {
+                audio = Some(num_buf.parse::<u32>().unwrap_or(1));
+                num_buf.clear();
+            }
+            _ => {}
+        }
+    }
+
+    match (video, audio) {
+        (Some(v), Some(a)) => Ok((v, a)),
+        (Some(v), None) => Ok((v, 0)),
+        (None, Some(a)) => Ok((0, a)),
+        _ => Err(anyhow::anyhow!("invalid --tracks format '{}', expected e.g. '3v1a'", spec)),
+    }
 }
 
 #[tokio::main]
@@ -130,6 +165,11 @@ async fn main() -> Result<()> {
     if let Some(latency) = args.target_latency {
         publisher.set_target_latency_ms(latency);
     }
+    if let Some(ref spec) = args.tracks {
+        let (expected_v, expected_a) = parse_track_spec(spec)?;
+        publisher.set_expected_tracks(expected_v, expected_a);
+        info!("Waiting for {} video + {} audio init segments before publishing catalog", expected_v, expected_a);
+    }
 
     // Load ad manager if --ad-dir is specified
     let ad_mgr = if let Some(ref ad_dir) = args.ad_dir {
@@ -160,17 +200,22 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Wait for first init segment before connecting to relay
-    info!("Waiting for first CMAF init segment...");
+    // Wait for complete catalog (all expected init segments) before connecting to relay
+    let wait_msg = if args.tracks.is_some() {
+        format!("Waiting for all init segments ({})...", args.tracks.as_ref().unwrap())
+    } else {
+        "Waiting for first CMAF init segment...".to_string()
+    };
+    info!("{}", wait_msg);
     tokio::time::timeout(
-        Duration::from_secs(120),
+        Duration::from_secs(300),
         first_init_notify.notified(),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("Timeout: no init segment received within 120s"))?;
+    .map_err(|_| anyhow::anyhow!("Timeout: init segments not received within 300s"))?;
 
     // Connect to Cloudflare relay as publisher
-    info!("First init received — connecting to Cloudflare relay at {}...", relay_url);
+    info!("All init segments received — connecting to relay at {}...", relay_url);
 
     let relay_url_parsed: url::Url = relay_url.parse()?;
     let client_config = moq_native::ClientConfig::default();

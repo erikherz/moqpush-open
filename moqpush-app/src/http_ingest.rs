@@ -281,12 +281,10 @@ async fn handle_request(
                     Ok(real_name) => {
                         resolver.remap_track(&placeholder_name, &real_name);
                         info!("Registered init for track '{}' from {} (source: {})", real_name, path, remote_addr.ip());
-                        if publisher.track_count() == 1 {
-                            first_init_notify.notify_one();
-                        }
                         if publisher.has_complete_catalog() {
                             publisher.publish_msf_catalog();
                             info!("Published MSF catalog ({} tracks) — source IP: {}", publisher.track_count(), remote_addr.ip());
+                            first_init_notify.notify_one();
                         }
                     }
                     Err(e) => error!("Failed to register init: {}", e),
@@ -318,12 +316,10 @@ async fn handle_request(
                         Ok(real_name) => {
                             resolver.remap_track(&placeholder_name, &real_name);
                             info!("Registered init for track '{}' from {} (source: {})", real_name, path, remote_addr.ip());
-                            if publisher.track_count() == 1 {
-                                first_init_notify.notify_one();
-                            }
                             if publisher.has_complete_catalog() {
                                 publisher.publish_msf_catalog();
                                 info!("Published MSF catalog ({} tracks) — source IP: {}", publisher.track_count(), remote_addr.ip());
+                                first_init_notify.notify_one();
                             }
                         }
                         Err(e) => error!("Failed to register init: {}", e),
