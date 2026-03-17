@@ -801,23 +801,9 @@ impl Publisher {
             timeslots.push(slot);
         }
 
-        // Open groups on all tracks for the ad
-        for (track_name, _) in &video_matches {
-            if let Some(state) = self.tracks.get_mut(track_name) {
-                let group = state.track.append_group()
-                    .map_err(|e| anyhow!("failed to create ad group for '{}': {}", track_name, e))?;
-                state.group = Some(group);
-            }
-        }
-        if let Some(ref at) = audio_track {
-            if !ad.audio_fragments.is_empty() {
-                if let Some(state) = self.tracks.get_mut(at) {
-                    let group = state.track.append_group()
-                        .map_err(|e| anyhow!("failed to create ad audio group: {}", e))?;
-                    state.group = Some(group);
-                }
-            }
-        }
+        // Groups are NOT opened here — publish_ad_slot opens/closes a group per slot,
+        // matching the live pattern (one group per segment). This ensures the relay
+        // forwards each ad fragment as a discrete group rather than one long-lived stream.
 
         // Compute pacing interval from the first ad video track's BDT deltas.
         // Uses the AD's timescale (not the live track's timescale).
@@ -849,19 +835,28 @@ impl Publisher {
         Ok((timeslots, pace_ms))
     }
 
-    /// Publish one timeslot of ad fragments (call this with pacing from async context).
+    /// Publish one timeslot of ad fragments. Each slot gets its own group per track
+    /// (matching the live pattern: one group per segment), so the relay forwards
+    /// each ad fragment as a discrete group rather than one long-lived stream.
     pub fn publish_ad_slot(&mut self, slot: &[(String, Bytes)]) -> Result<u32> {
         let mut count: u32 = 0;
         for (track_name, frame_data) in slot {
             if let Some(state) = self.tracks.get_mut(track_name) {
-                if let Some(ref mut group) = state.group {
-                    let len = frame_data.len() as u64;
-                    group.write_frame(frame_data.clone())
-                        .map_err(|e| anyhow!("failed to write ad frame for '{}': {}", track_name, e))?;
-                    self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
-                    self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
-                    count += 1;
+                // Close previous group if open
+                if let Some(mut prev) = state.group.take() {
+                    let _ = prev.finish();
                 }
+                // Open new group, write frame, leave open (finished on next slot or finish_ad)
+                let mut group = state.track.append_group()
+                    .map_err(|e| anyhow!("failed to create ad group for '{}': {}", track_name, e))?;
+                let len = frame_data.len() as u64;
+                group.write_frame(frame_data.clone())
+                    .map_err(|e| anyhow!("failed to write ad frame for '{}': {}", track_name, e))?;
+                self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
+                self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
+                count += 1;
+                // Finish the group immediately so relay delivers it as a discrete unit
+                let _ = group.finish();
             }
         }
         Ok(count)
@@ -891,8 +886,9 @@ impl Publisher {
                                 Ok(_) => info!("AD_INSERT: sent live init for '{}' as frame", track_name),
                                 Err(e) => warn!("AD_INSERT: failed to write live init for '{}': {}", track_name, e),
                             }
-                            // Leave group open — next live fragment will continue in it
-                            state.group = Some(group);
+                            // Finish this group so relay delivers init as discrete unit.
+                            // Next live fragment will create a new group via start_segment.
+                            let _ = group.finish();
                         }
                         Err(e) => warn!("AD_INSERT: failed to create resume group for '{}': {}", track_name, e),
                     }
