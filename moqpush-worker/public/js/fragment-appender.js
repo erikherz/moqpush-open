@@ -276,11 +276,12 @@ class FragmentAppender {
 
     const data = queue.shift();
 
-    // Handle changeType marker (queued by setInitSegment when codec changes)
+    // Handle changeType marker (queued by setInitSegment when codec/init changes)
     if (data && data._changeType) {
       try {
+        sb.abort();
         sb.changeType(data._changeType);
-        console.log(`[MSE] ${type} changeType: ${data._oldCodec} → ${data._newCodec}`);
+        console.log(`[MSE] ${type} abort+changeType: ${data._oldCodec} → ${data._newCodec}`);
       } catch (e) {
         console.error(`[MSE] ${type} changeType failed:`, e);
       }
