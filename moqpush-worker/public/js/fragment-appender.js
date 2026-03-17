@@ -154,17 +154,25 @@ class FragmentAppender {
     }
 
     if (this.initialized && this.sourceBuffers[type]) {
-      // If codec changed, queue a changeType operation before the new init
+      // Always call changeType when init bytes differ — even if the codec string
+      // is the same, the decoder config (SPS/PPS, AudioSpecificConfig) may differ
+      // between encoders, requiring a full decoder reinit.
       const effectiveNewCodec = newCodec || this.codecs[type];
-      if (oldCodec && effectiveNewCodec !== oldCodec) {
+      const initChanged = this._lastInitBytes && this._lastInitBytes[type] &&
+        buf.byteLength !== this._lastInitBytes[type].byteLength;
+      if (oldCodec && (effectiveNewCodec !== oldCodec || initChanged)) {
         const mime = `${type}/mp4; codecs="${effectiveNewCodec}"`;
-        // Push a changeType marker — _processQueue will handle it
-        this.queues[type].push({ _changeType: mime, _oldCodec: oldCodec, _newCodec: effectiveNewCodec });
+        this.queues[type].push({ _changeType: mime, _oldCodec: oldCodec || effectiveNewCodec, _newCodec: effectiveNewCodec });
       }
+      if (!this._lastInitBytes) this._lastInitBytes = {};
+      this._lastInitBytes[type] = buf;
       this.queues[type].push(buf);
       this._processQueue(type);
       return;
     }
+
+    if (!this._lastInitBytes) this._lastInitBytes = {};
+    this._lastInitBytes[type] = buf;
 
     if (this.codecs.video && this.codecs.audio && !this.initialized) {
       this._autoInit().catch(e => console.error('[MSE] autoInit error:', e));
