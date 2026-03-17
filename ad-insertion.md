@@ -305,6 +305,47 @@ For the smoothest playback, match these parameters between ad and live:
 
 The codec profile/level and encoder don't need to match — the init-as-frame approach handles codec switching automatically.
 
+## Player Requirements
+
+Ad insertion uses an "init-as-frame" approach where moov (init) segments are delivered as regular MoQ data objects on the track, interleaved with moof+mdat media fragments. This is a standard MSE pattern but requires specific player-side handling.
+
+### What the Viper Player Does
+
+The MoQpush Viper player (`moqt-player.js` + `fragment-appender.js`) implements the following for ad insertion support:
+
+1. **moov detection on every incoming frame** — `_onFrame()` calls `hasMoov(payload)` on each MoQ object. When a moov box is detected, it calls `appender.setInitSegment(type, payload)` to reinitialize the decoder rather than appending it as media.
+
+2. **Codec change detection** — `setInitSegment()` parses the codec string from the new moov (e.g. `avc1.64001f`) and compares it to the current codec. If different, a `changeType()` operation is required before appending the new init.
+
+3. **Queued `changeType()` calls** — MSE's `SourceBuffer.changeType()` throws `InvalidStateError` if called while `appendBuffer()` is in progress. The Viper player queues `changeType` as a marker object in the append queue. When `_processQueue()` encounters the marker and the SourceBuffer is idle, it executes `changeType()` synchronously and immediately processes the next queue item (the init segment).
+
+4. **Catalog init change tracking** — As a fallback, the player also compares `initData` in catalog updates against previously seen values, but only for subscribed tracks. This is secondary to the moov-in-frame detection.
+
+### Requirements for Other MoQT Players
+
+For other MoQ Transport players to support MoQpush ad insertion, they need:
+
+1. **moov box detection in incoming data objects** — Check each received object for an ftyp/moov box (bytes 4-7 = `"moov"` or `"ftyp"`). If present, treat it as an init segment rather than a media fragment.
+
+2. **MSE SourceBuffer reinitialization** — When a new moov is detected, append it to the SourceBuffer via `appendBuffer()`. MSE treats moov appends as decoder reconfiguration points. If the codec has changed (e.g. different H.264 profile), call `SourceBuffer.changeType(newMime)` before appending the moov.
+
+3. **Ordered processing** — The `changeType()` → moov append → moof append sequence must execute in order. Since `appendBuffer()` is asynchronous, the player needs a queue that waits for `updateend` between operations.
+
+### If a Player Lacks These Features
+
+If a MoQ player does not implement moov detection and codec switching:
+
+- **Same-codec ads** (ad encoded with identical encoder settings as live) will play correctly — the moov frame will be appended to the SourceBuffer and MSE will silently accept it as a redundant init segment. No visual disruption.
+
+- **Different-codec ads** (ad from a different encoder, different H.264 profile/level, or different audio parameters) will cause decoder errors. The SourceBuffer will attempt to decode ad fragments using the live init segment's SPS/PPS, resulting in:
+  - Frozen video or green/corrupted frames
+  - `SourceBuffer` error events
+  - Possible playback stall requiring the user to reload
+
+- **Audio codec mismatches** (e.g. different sample rate or channel count) will cause audio to drop or the audio SourceBuffer to error out.
+
+To avoid these issues without player changes, pre-encode all ad content using the **same encoder and settings** as the live source, so the init segments are byte-compatible and no codec switch is needed.
+
 ## Limitations
 
 - **Single ad at a time** — Triggering a new ad while one is playing is not supported
