@@ -374,10 +374,6 @@ async fn handle_ad_trigger(
         }
     };
 
-    let use_ad_init = params.get("use_init")
-        .map(|v| v == "1" || v == "true")
-        .unwrap_or(false);
-
     let ad = match ad_mgr.get(&ad_name) {
         Some(a) => a.clone(),
         None => {
@@ -389,11 +385,11 @@ async fn handle_ad_trigger(
         }
     };
 
-    // Prepare the ad (compute offsets, rebase timestamps, open groups)
+    // Prepare the ad: match tracks, build timeslots with init-as-frame
     let (timeslots, pace_ms) = {
         let mut guard = state.lock().await;
         let (ref _resolver, ref mut publisher) = *guard;
-        match publisher.prepare_ad(&ad, use_ad_init) {
+        match publisher.prepare_ad(&ad) {
             Ok(result) => result,
             Err(e) => {
                 error!("Ad preparation failed: {}", e);
@@ -426,8 +422,8 @@ async fn handle_ad_trigger(
             }
         }
 
-        // Pace: sleep for remainder of the interval
-        if i + 1 < total_slots {
+        // Pace: slot 0 is init segments (send immediately), slots 1+ are media (paced)
+        if i > 0 && i + 1 < total_slots {
             let elapsed = slot_start.elapsed();
             if elapsed < pace_interval {
                 tokio::time::sleep(pace_interval - elapsed).await;
