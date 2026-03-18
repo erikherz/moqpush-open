@@ -224,9 +224,6 @@ async fn main() -> Result<()> {
 
     let mut relay_url_parsed: url::Url = relay_url.parse()?;
     if !jwt.is_empty() {
-        // Append namespace to path — relay checks JWT root against URL path
-        let path = relay_url_parsed.path().trim_end_matches('/').to_string();
-        relay_url_parsed.set_path(&format!("{}/{}", path, namespace));
         relay_url_parsed.query_pairs_mut().append_pair("jwt", &jwt);
     }
     let client_config = moq_native::ClientConfig::default();
