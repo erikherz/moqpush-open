@@ -139,8 +139,13 @@ async fn main() -> Result<()> {
         .as_str()
         .unwrap_or(DEFAULT_RELAY)
         .to_string();
+    let jwt = auth_body["jwt"].as_str().unwrap_or("").to_string();
 
-    info!("Authenticated: namespace='{}', relay='{}'", namespace, relay_url);
+    if jwt.is_empty() {
+        info!("Authenticated: namespace='{}', relay='{}' (no JWT)", namespace, relay_url);
+    } else {
+        info!("Authenticated: namespace='{}', relay='{}' (JWT received)", namespace, relay_url);
+    }
 
     // Create shutdown channel
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
@@ -217,7 +222,10 @@ async fn main() -> Result<()> {
     // Connect to Cloudflare relay as publisher
     info!("All init segments received — connecting to relay at {}...", relay_url);
 
-    let relay_url_parsed: url::Url = relay_url.parse()?;
+    let mut relay_url_parsed: url::Url = relay_url.parse()?;
+    if !jwt.is_empty() {
+        relay_url_parsed.query_pairs_mut().append_pair("jwt", &jwt);
+    }
     let client_config = moq_native::ClientConfig::default();
 
     let client = client_config.init()?;
