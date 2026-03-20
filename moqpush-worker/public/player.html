@@ -247,24 +247,31 @@
           const tRow = (label, ms) => ms != null ? row(label, `${ms}ms`) : '';
           statsEl.innerHTML = `
             <div class="stats-title">Viper Player</div>
-            ${row('Protocol', 'MoQ Transport / WebTransport')}
-            ${row('Catalog', 'MSF draft-00 / CMSF draft-00')}
+            ${row('Protocol / Format', 'MoQT / WebTransport / CMSF')}
             ${row('Relay', relayUrl.replace('https://', ''))}
-            ${row('Namespace', namespace)}
             ${row('', '')}
-            ${row('Video', `${s.width}x${s.height}`)}
-            ${row('Video Codec', player.appender.codecs.video || 'pending')}
-            ${row('Audio Codec', player.appender.codecs.audio || 'pending')}
             ${row('Dropped Frames', `${(video.getVideoPlaybackQuality?.() || {}).droppedVideoFrames || 0}`)}
+            ${row('Stale Drops', `V:${s.droppedStaleVideo || 0} A:${s.droppedStaleAudio || 0}`)}
             ${row('Frames Received', s.framesReceived)}
             ${row('Buffer Health', `${s.bufferHealth}s`)}
+            ${row('Target Latency', `${s.targetLatency ?? 2000}ms`)}
             ${row('Session', `${uptime}s`)}
+            ${s.abrLadderSize > 1 ? `
+            ${row('', '')}
+            ${row('ABR Ladder', s.abrLadder)}
+            ${row('Current ABR Track', s.abrCurrentResolution)}
+            ${row('ABR Switches', s.abrSwitchCount)}
+            ` : ''}
+            ${row('', '')}
+            ${row('Relay RTT', '(unavailable)')}
+            ${row('Relay Recv Rate', '(unavailable)')}
+            ${row('Relay Send Rate', '(unavailable)')}
+            ${row('QUIC Max Rate', '(unavailable)')}
+            ${row('Relay Pkt Loss', '(unavailable)')}
             ${row('', '')}
             ${tRow('SETUP', t.setupMs)}
             ${tRow('Catalog', t.catalogMs)}
             ${tRow('1st Fragment', t.firstFragmentMs)}
-            ${row('', '')}
-            ${row('Player', 'Viper (MoQT + MSE)')}
             ${tRow('TTFF', t.firstDecodedMs)}
           `;
         }, 500);

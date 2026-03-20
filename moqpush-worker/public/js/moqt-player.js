@@ -217,6 +217,7 @@ const MSG_SERVER_SETUP   = 0x21;
 const MSG_SUBSCRIBE      = 0x03;
 const MSG_SUBSCRIBE_OK   = 0x04;
 const MSG_SUBSCRIBE_ERROR = 0x05;
+const MSG_UNSUBSCRIBE    = 0x0a;
 const MSG_GOAWAY         = 0x10;
 const MSG_MAX_REQUEST_ID = 0x15;
 
@@ -257,6 +258,24 @@ class MoqtPlayer {
     this.stats = { framesReceived: 0, bytesReceived: 0, startTime: 0 };
     this._playTriggered = false;
     this._initialSeekDone = false;
+
+    // ABR state
+    this.abrLadder = [];
+    this.abrCurrentIndex = -1;
+    this.abrActiveTrack = null;
+    this.abrSwitching = false;
+    this.abrSwitchCount = 0;
+    this.abrState = 'init';
+    this.abrStableStart = 0;
+    this.abrLastDroppedFrames = 0;
+    this._abrPendingSwitch = null;
+    this._abrInterval = null;
+
+    // Latency control
+    this.targetLatency = opts.targetLatency || 2000;
+    this._timescale = { video: 0, audio: 0 };
+    this._latestBDT = { video: 0, audio: 0 };
+    this._droppedStale = { video: 0, audio: 0 };
 
     // Pipeline timing instrumentation
     this.timing = {};
@@ -437,6 +456,24 @@ class MoqtPlayer {
     return new Promise((resolve, reject) => {
       this.subscribeCallbacks.set(requestId, { resolve, reject, trackName });
     });
+  }
+
+  // --- UNSUBSCRIBE ---
+
+  async _unsubscribe(requestId) {
+    const body = new MsgBuilder();
+    body.varint(requestId);
+    const buf = body.finish();
+    await this.controlWriter.writeControlMessage(MSG_UNSUBSCRIBE, buf);
+    console.log(`[MoQT] UNSUBSCRIBE id=${requestId}`);
+
+    // Clean up alias map entry for this requestId
+    for (const [alias, info] of this.trackAliasMap) {
+      if (info.requestId === requestId) {
+        this.trackAliasMap.delete(alias);
+        break;
+      }
+    }
   }
 
   // --- Control Message Loop ---
@@ -683,14 +720,52 @@ class MoqtPlayer {
     // Determine media type from track name
     const type = trackInfo.type || (name.startsWith('video') ? 'video' : 'audio');
 
+    // ABR transition: detect frames from new/old track during switch
+    if (this._abrPendingSwitch && type === 'video') {
+      const pending = this._abrPendingSwitch;
+      if (name === pending.newTrack.name && window.hasMoof(payload)) {
+        if (!pending.receivedFirstGroup) {
+          pending.receivedFirstGroup = true;
+          console.log(`[ABR] First moof from new track ${name}`);
+          this._abrCompleteSwitch();
+        }
+      } else if (pending.receivedFirstGroup && name === pending.oldTrack?.name) {
+        return; // Drop frames from old track after switch
+      }
+    }
+
     // Detect init segment (moov) vs media fragment (moof)
     if (window.hasMoov(payload)) {
       console.log(`[MoQT] Init segment: ${name} (${payload.byteLength}B) group=${groupId}`);
+      const ts = window.parseTimescaleFromInit(payload);
+      if (ts) {
+        this._timescale[type] = ts;
+        console.log(`[MoQT] ${type} timescale=${ts}`);
+      }
       this.appender.setInitSegment(type, payload);
     } else if (window.hasMoof(payload)) {
       if (!this.timing.firstFragment) {
         this.timing.firstFragment = performance.now();
         this.timing.firstFragmentType = type;
+      }
+      // Latency-based fragment dropping
+      if (this._timescale[type] > 0) {
+        const bdt = window.parseBDT(payload);
+        if (bdt !== null) {
+          if (bdt > this._latestBDT[type]) {
+            this._latestBDT[type] = bdt;
+          }
+          const age = this._latestBDT[type] - bdt;
+          const maxAge = (this.targetLatency * 1.5) * this._timescale[type] / 1000;
+          if (age > maxAge) {
+            this._droppedStale[type]++;
+            if (this._droppedStale[type] <= 5 || this._droppedStale[type] % 50 === 0) {
+              const ageMs = Math.round(age * 1000 / this._timescale[type]);
+              console.log(`[Latency] Dropping stale ${type} fragment: ${ageMs}ms behind (dropped=${this._droppedStale[type]})`);
+            }
+            return;
+          }
+        }
       }
       this.appender.append(type, payload);
       // Trigger play immediately on first media append
@@ -765,55 +840,231 @@ class MoqtPlayer {
         }
       }
 
-      // Pick highest resolution video track
-      const selectedVideo = videoTracks.length > 0
-        ? videoTracks.reduce((best, t) => {
-            const res = (t.width || 0) * (t.height || 0);
-            const bestRes = (best.width || 0) * (best.height || 0);
-            return res > bestRes ? t : best;
-          })
+      // Build ABR ladder — sort video tracks ascending by resolution
+      this.abrLadder = videoTracks
+        .map(t => ({ name: t.name, width: t.width || 0, height: t.height || 0, initData: t.initData }))
+        .sort((a, b) => (a.width * a.height) - (b.width * b.height));
+
+      // Select starting quality: medium (middle of ladder)
+      const startIndex = this.abrLadder.length > 1
+        ? Math.floor((this.abrLadder.length - 1) / 2)
+        : 0;
+      this.abrCurrentIndex = startIndex;
+      const selectedVideo = this.abrLadder.length > 0
+        ? videoTracks.find(t => t.name === this.abrLadder[startIndex].name)
         : null;
       const selectedAudio = audioTracks.length > 0 ? audioTracks[0] : null;
-      const selected = [selectedVideo, selectedAudio].filter(Boolean);
+
+      // Read targetLatency from catalog
+      if (selectedVideo && selectedVideo.targetLatency) {
+        this.targetLatency = selectedVideo.targetLatency;
+      } else if (catalog.targetLatency) {
+        this.targetLatency = catalog.targetLatency;
+      }
+      console.log(`[MoQT] Target latency: ${this.targetLatency}ms`);
+
+      if (this.abrLadder.length > 1) {
+        const ladder = this.abrLadder.map(t => `${t.height}p`).join(' < ');
+        console.log(`[MoQT] ABR ladder: ${ladder}, starting at ${this.abrLadder[startIndex].height}p (index ${startIndex})`);
+      }
 
       console.log(`[MoQT] Selected tracks: video=${selectedVideo?.name} audio=${selectedAudio?.name}`);
-      this.onStatus(`Subscribing to ${selected.length} tracks...`);
+      this.onStatus(`Subscribing...`);
 
-      // Extract init data from catalog before subscribing
-      for (const track of selected) {
-        const type = track === selectedVideo ? 'video' : 'audio';
-        if (track.initData) {
-          try {
-            const initBytes = this._base64ToUint8Array(track.initData);
-            console.log(`[MoQT] Init from catalog: ${track.name} (${initBytes.byteLength}B)`);
-            this.appender.setInitSegment(type, initBytes);
-            this._lastInitData[type] = track.initData;
-          } catch (e) {
-            console.warn(`[MoQT] Failed to decode initData for ${track.name}:`, e);
-          }
+      // Extract init data for selected tracks
+      if (selectedVideo?.initData) {
+        try {
+          const initBytes = this._base64ToUint8Array(selectedVideo.initData);
+          console.log(`[MoQT] Init from catalog: ${selectedVideo.name} (${initBytes.byteLength}B)`);
+          this.appender.setInitSegment('video', initBytes);
+          this._lastInitData['video'] = selectedVideo.initData;
+        } catch (e) {
+          console.warn(`[MoQT] Failed to decode initData for ${selectedVideo.name}:`, e);
+        }
+      }
+      if (selectedAudio?.initData) {
+        try {
+          const initBytes = this._base64ToUint8Array(selectedAudio.initData);
+          console.log(`[MoQT] Init from catalog: ${selectedAudio.name} (${initBytes.byteLength}B)`);
+          this.appender.setInitSegment('audio', initBytes);
+          this._lastInitData['audio'] = selectedAudio.initData;
+        } catch (e) {
+          console.warn(`[MoQT] Failed to decode initData for ${selectedAudio.name}:`, e);
         }
       }
 
-      // Subscribe to video and audio in parallel — atomic writer prevents interleaved bytes
+      // Subscribe to selected video and audio
       this.timing.subscribeStart = performance.now();
-      await Promise.all(selected.map(async (track) => {
-        const type = track === selectedVideo ? 'video' : 'audio';
-        this._subscribedTracks[track.name] = type;
-        const priority = type === 'video' ? 128 : 64;
+
+      if (selectedVideo) {
+        this._subscribedTracks[selectedVideo.name] = 'video';
         try {
-          const alias = await this._subscribe(track.name, priority);
+          const alias = await this._subscribe(selectedVideo.name, 128);
           const info = this.trackAliasMap.get(alias);
-          if (info) info.type = type;
+          if (info) info.type = 'video';
+          this.abrActiveTrack = {
+            name: selectedVideo.name,
+            alias,
+            requestId: info?.requestId ?? (this.nextReqId - 2),
+          };
         } catch (e) {
-          console.error(`[MoQT] Failed to subscribe to ${track.name}:`, e);
+          console.error(`[MoQT] Failed to subscribe to ${selectedVideo.name}:`, e);
         }
-      }));
+      }
+
+      if (selectedAudio) {
+        this._subscribedTracks[selectedAudio.name] = 'audio';
+        try {
+          const alias = await this._subscribe(selectedAudio.name, 64);
+          const info = this.trackAliasMap.get(alias);
+          if (info) info.type = 'audio';
+        } catch (e) {
+          console.error(`[MoQT] Failed to subscribe to ${selectedAudio.name}:`, e);
+        }
+      }
+
       this.timing.subscribeDone = performance.now();
+      this.abrState = 'stable';
+      this.abrStableStart = Date.now();
+      this._startAbrMonitor();
 
       this.onStatus('Playing');
     } catch (e) {
       console.error('[MoQT] Catalog parse error:', e);
     }
+  }
+
+  // --- ABR ---
+
+  _startAbrMonitor() {
+    if (this.abrLadder.length <= 1) return;
+    this._abrInterval = setInterval(() => this._abrEvaluate(), 1000);
+  }
+
+  _abrEvaluate() {
+    if (this.abrSwitching) return;
+
+    // Grace period: skip evaluation until 5s after first decode
+    if (!this.timing.firstFrameDecoded || (performance.now() - this.timing.firstFrameDecoded) < 5000) return;
+
+    const video = this.video;
+    const buffered = video.buffered;
+    const bufferHealth = buffered.length > 0
+      ? buffered.end(buffered.length - 1) - video.currentTime
+      : 0;
+
+    const dropped = video.getVideoPlaybackQuality?.()?.droppedVideoFrames || 0;
+    const droppedDelta = dropped - this.abrLastDroppedFrames;
+    this.abrLastDroppedFrames = dropped;
+
+    const targetSec = this.targetLatency / 1000;
+    const downThreshold = targetSec * 0.3;
+    const upThreshold = targetSec * 1.5;
+
+    // Switch DOWN: buffer critically low or excessive dropped frames
+    if ((bufferHealth < downThreshold || droppedDelta > 5) && this.abrCurrentIndex > 0) {
+      console.log(`[ABR] Switch DOWN: buffer=${bufferHealth.toFixed(2)}s (threshold=${downThreshold.toFixed(2)}s) dropped=${droppedDelta} → ${this.abrLadder[this.abrCurrentIndex - 1].height}p`);
+      this._abrSwitchTo(this.abrCurrentIndex - 1);
+      return;
+    }
+
+    // Switch UP: sustained healthy buffer
+    if (bufferHealth > upThreshold && this.abrCurrentIndex < this.abrLadder.length - 1) {
+      if (this.abrState !== 'stable') {
+        this.abrState = 'stable';
+        this.abrStableStart = Date.now();
+      } else if (Date.now() - this.abrStableStart > 5000) {
+        console.log(`[ABR] Switch UP: buffer=${bufferHealth.toFixed(2)}s (threshold=${upThreshold.toFixed(2)}s) → ${this.abrLadder[this.abrCurrentIndex + 1].height}p`);
+        this._abrSwitchTo(this.abrCurrentIndex + 1);
+        return;
+      }
+    } else {
+      if (this.abrState === 'stable' && bufferHealth <= upThreshold) {
+        this.abrStableStart = Date.now();
+      }
+    }
+  }
+
+  async _abrSwitchTo(newIndex) {
+    if (newIndex < 0 || newIndex >= this.abrLadder.length) return;
+    if (this.abrSwitching) return;
+
+    this.abrSwitching = true;
+    this.abrState = 'switching';
+    const oldTrack = this.abrActiveTrack;
+    const newTrackInfo = this.abrLadder[newIndex];
+
+    console.log(`[ABR] Switching: ${this.abrLadder[this.abrCurrentIndex].height}p → ${newTrackInfo.height}p`);
+
+    // Pre-load new track's init segment from catalog
+    if (newTrackInfo.initData) {
+      try {
+        const initBytes = this._base64ToUint8Array(newTrackInfo.initData);
+        this.appender.setInitSegment('video', initBytes);
+      } catch (e) {
+        console.warn(`[ABR] Failed to decode initData:`, e);
+      }
+    }
+
+    this._abrPendingSwitch = {
+      oldTrack,
+      newTrack: newTrackInfo,
+      receivedFirstGroup: false,
+    };
+
+    // Subscribe to new track
+    try {
+      this._subscribedTracks[newTrackInfo.name] = 'video';
+      const alias = await this._subscribe(newTrackInfo.name, 128);
+      const info = this.trackAliasMap.get(alias);
+      if (info) info.type = 'video';
+      this.abrActiveTrack = {
+        name: newTrackInfo.name,
+        alias,
+        requestId: info?.requestId ?? (this.nextReqId - 2),
+      };
+    } catch (e) {
+      console.error(`[ABR] Failed to subscribe to ${newTrackInfo.name}:`, e);
+      this.abrSwitching = false;
+      this.abrState = 'stable';
+      this._abrPendingSwitch = null;
+      return;
+    }
+
+    this.abrCurrentIndex = newIndex;
+
+    // Timeout: abort if no data arrives in 5 seconds
+    setTimeout(() => {
+      if (this._abrPendingSwitch && !this._abrPendingSwitch.receivedFirstGroup) {
+        console.warn(`[ABR] Switch timeout, aborting`);
+        this._abrAbortSwitch();
+      }
+    }, 5000);
+  }
+
+  _abrCompleteSwitch() {
+    if (!this._abrPendingSwitch) return;
+    const oldTrack = this._abrPendingSwitch.oldTrack;
+
+    // Unsubscribe old track
+    if (oldTrack) {
+      this._unsubscribe(oldTrack.requestId);
+      delete this._subscribedTracks[oldTrack.name];
+      console.log(`[ABR] Unsubscribed old track: ${oldTrack.name}`);
+    }
+
+    this._abrPendingSwitch = null;
+    this.abrSwitching = false;
+    this.abrSwitchCount++;
+    this.abrState = 'stable';
+    this.abrStableStart = Date.now();
+  }
+
+  _abrAbortSwitch() {
+    this._abrPendingSwitch = null;
+    this.abrSwitching = false;
+    this.abrState = 'stable';
+    this.abrStableStart = Date.now();
   }
 
   _base64ToUint8Array(b64) {
@@ -832,16 +1083,25 @@ class MoqtPlayer {
       if (this.video.currentTime > 0) {
         this.appender.trimBuffer(this.video.currentTime, 3);
       }
-      // Seek to live edge if we fall too far behind.
-      const edge = this._getLiveEdge();
-      if (edge > 0) {
-        const behind = edge - this.video.currentTime;
-        if (behind > 2.0 && !this.video.paused) {
-          console.log(`[MoQT] Seeking to live edge (behind ${behind.toFixed(1)}s)`);
-          this.video.currentTime = edge - 0.1;
-        }
-      }
     }, 1000);
+    // Live-edge seeking pinned to targetLatency
+    this._seekLoop();
+  }
+
+  _seekLoop() {
+    setInterval(() => {
+      const b = this.video.buffered;
+      if (b.length === 0 || this.video.paused) return;
+      const edge = b.end(b.length - 1);
+      const target = Math.max(
+        b.start(0),
+        Math.min(edge - (this.targetLatency / 1000), edge - 0.05)
+      );
+      const drift = target - this.video.currentTime;
+      if (Math.abs(drift) > 0.2) {
+        this.video.currentTime = target;
+      }
+    }, 200);
   }
 
   /** Get the live edge — use video buffer (what's actually decodable),
@@ -968,12 +1228,24 @@ class MoqtPlayer {
       uptime: Math.floor((Date.now() - this.stats.startTime) / 1000),
       width: this.video.videoWidth,
       height: this.video.videoHeight,
+      abrState: this.abrState,
+      abrCurrentTrack: this.abrActiveTrack?.name || '',
+      abrCurrentResolution: this.abrCurrentIndex >= 0 && this.abrLadder[this.abrCurrentIndex]
+        ? `${this.abrLadder[this.abrCurrentIndex].height}p`
+        : '',
+      abrLadderSize: this.abrLadder.length,
+      abrSwitchCount: this.abrSwitchCount,
+      abrLadder: this.abrLadder.map(t => `${t.height}p`).join(', '),
+      targetLatency: this.targetLatency,
+      droppedStaleVideo: this._droppedStale.video,
+      droppedStaleAudio: this._droppedStale.audio,
     };
   }
 
   // --- Cleanup ---
 
   destroy() {
+    if (this._abrInterval) clearInterval(this._abrInterval);
     this.appender.destroy();
     if (this.wt) {
       try { this.wt.close(); } catch (e) { /* ignore */ }

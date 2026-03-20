@@ -114,6 +114,44 @@ function hasMoof(data) {
   return findBox(data, 0, data.length, 'moof') !== null;
 }
 
+/** Parse timescale from init segment: moov → trak → mdia → mdhd → timescale */
+function parseTimescaleFromInit(data) {
+  const moov = findBox(data, 0, data.length, 'moov');
+  if (!moov) return null;
+  const trak = findBox(data, moov.contentOffset, moov.end, 'trak');
+  if (!trak) return null;
+  const mdia = findBox(data, trak.contentOffset, trak.end, 'mdia');
+  if (!mdia) return null;
+  const mdhd = findBox(data, mdia.contentOffset, mdia.end, 'mdhd');
+  if (!mdhd) return null;
+  const off = mdhd.contentOffset;
+  const version = data[off];
+  const tsOffset = off + (version === 1 ? 20 : 12);
+  if (tsOffset + 4 > mdhd.end) return null;
+  return ((data[tsOffset] << 24) | (data[tsOffset+1] << 16) |
+          (data[tsOffset+2] << 8) | data[tsOffset+3]) >>> 0;
+}
+
+/** Parse baseMediaDecodeTime from moof: moof → traf → tfdt → BDT */
+function parseBDT(data) {
+  const moof = findBox(data, 0, data.length, 'moof');
+  if (!moof) return null;
+  const traf = findBox(data, moof.contentOffset, moof.end, 'traf');
+  if (!traf) return null;
+  const tfdt = findBox(data, traf.contentOffset, traf.end, 'tfdt');
+  if (!tfdt) return null;
+  const off = tfdt.contentOffset;
+  const version = data[off];
+  if (version === 1) {
+    if (off + 12 > tfdt.end) return null;
+    const hi = ((data[off+4] << 24) | (data[off+5] << 16) | (data[off+6] << 8) | data[off+7]) >>> 0;
+    const lo = ((data[off+8] << 24) | (data[off+9] << 16) | (data[off+10] << 8) | data[off+11]) >>> 0;
+    return hi * 0x100000000 + lo;
+  }
+  if (off + 8 > tfdt.end) return null;
+  return ((data[off+4] << 24) | (data[off+5] << 16) | (data[off+6] << 8) | data[off+7]) >>> 0;
+}
+
 // --- FragmentAppender ---
 
 class FragmentAppender {
@@ -332,3 +370,5 @@ window.FragmentAppender = FragmentAppender;
 window.parseCodecFromInitSegment = parseCodecFromInitSegment;
 window.hasMoov = hasMoov;
 window.hasMoof = hasMoof;
+window.parseTimescaleFromInit = parseTimescaleFromInit;
+window.parseBDT = parseBDT;
