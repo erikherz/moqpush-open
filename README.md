@@ -7,10 +7,19 @@ Open source MoQ publisher. Takes CMAF-IF input from any encoder (Ateme, GPAC, FF
 ### Standalone (no account, BYO relay)
 
 ```bash
-moqpush-app --relay-url https://your-relay:443 --tracks 2v1a --target-latency 500
+# Publish
+moqpush-app --relay-url https://your-relay:443 --namespace my-stream --tracks 2v1a --target-latency 500
 
 # Point your encoder's HTTP CMAF-IF output at port 9078
-# Open player/moq-player.html in Chrome to watch
+# Open player/moq-player.html in Chrome, enter relay URL + namespace
+```
+
+### Test mode (verify encoder output, no relay needed)
+
+```bash
+moqpush-app --test
+
+# Point your encoder at port 9078 — fragment info printed to console
 ```
 
 ### Managed hosting via moqcdn.net (free tier)
@@ -35,13 +44,15 @@ Same command, same binary. Premium namespaces automatically route to the moqcdn 
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| --test | | Test mode: print fragment info, no relay |
 | --relay-url | — | Relay URL (standalone mode, no Worker) |
+| --namespace | — | Namespace (required with --relay-url) |
 | --push-key | — | Push key (managed mode, from moqcdn.net) |
-| --worker-url | — | Worker URL (managed mode) |
+| --worker-url | moqcdn.net | Worker URL (managed mode) |
 | --tracks | — | Wait for N video + M audio inits (e.g. `2v1a`) |
 | --target-latency | 2000 | Target latency in ms (published in catalog) |
 | --port | 9078 | HTTP CMAF-IF ingest port |
-| --tls-disable-verify | false | Skip TLS verification (testing) |
+| --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
 
 ## Player
 
