@@ -22,16 +22,24 @@ const DEFAULT_RELAY: &str = "https://draft-14.cloudflare.mediaoverquic.com";
 #[command(name = "moqpush-app")]
 #[command(about = "MoQ push publisher — accepts HTTP CMAF-IF from encoder and publishes to Cloudflare relay")]
 struct Args {
-    /// Push key (from moqpush admin)
+    /// Push key (managed mode: from moqcdn.net admin)
     #[arg(long, env = "MOQPUSH_KEY")]
     push_key: Option<String>,
 
-    /// Worker URL for auth + heartbeat + stats + orchestration
-    #[arg(long, default_value = "https://moqpush.com")]
+    /// Worker URL for auth + heartbeat (managed mode)
+    #[arg(long, default_value = "https://moqcdn.net")]
     worker_url: String,
 
+    /// Relay URL (standalone mode: connect directly, no Worker auth)
+    #[arg(long)]
+    relay_url: Option<String>,
+
+    /// Namespace (standalone mode: required with --relay-url)
+    #[arg(long)]
+    namespace: Option<String>,
+
     /// Port for HTTP CMAF-IF ingest
-    #[arg(long, default_value_t = 8888)]
+    #[arg(long, default_value_t = 9078)]
     port: u16,
 
     /// Target latency in milliseconds for the MSF catalog (default: 2000)
@@ -46,6 +54,10 @@ struct Args {
     /// Test mode: accept and print incoming data without connecting to worker or relay
     #[arg(long)]
     test: bool,
+
+    /// Skip TLS certificate verification (for self-signed relay certs in testing)
+    #[arg(long)]
+    tls_disable_verify: bool,
 
 }
 
@@ -98,61 +110,74 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let push_key = args.push_key
-        .ok_or_else(|| anyhow::anyhow!("--push-key is required (or use --test for test mode)"))?;
-
-    let instance_id: String = {
-        let mut rng = rand::rng();
-        (0..16).map(|_| format!("{:x}", rng.random_range(0..16u8))).collect()
-    };
-    info!("Instance ID: {}", instance_id);
-
-    // Authenticate with the moqpush worker
-    info!("Authenticating with worker at {}...", args.worker_url);
-    let client = reqwest::Client::new();
-
-    let auth_resp = client
-        .post(format!("{}/api/push/auth", args.worker_url))
-        .json(&serde_json::json!({
-            "push_key": push_key,
-            "instance_id": instance_id,
-        }))
-        .send()
-        .await?;
-
-    let status = auth_resp.status();
-    if !status.is_success() {
-        let body = auth_resp.text().await.unwrap_or_default();
-        if status.as_u16() == 409 {
-            return Err(anyhow::anyhow!("Namespace already in use by another instance: {}", body));
-        }
-        return Err(anyhow::anyhow!("Auth failed ({}): {}", status, body));
-    }
-
-    let auth_body: serde_json::Value = auth_resp.json().await?;
-    let namespace = auth_body["namespace"].as_str().unwrap_or("").to_string();
-    let relay_url = auth_body["relay_url"]
-        .as_str()
-        .unwrap_or(DEFAULT_RELAY)
-        .to_string();
-    let jwt = auth_body["jwt"].as_str().unwrap_or("").to_string();
-
-    if jwt.is_empty() {
-        info!("Authenticated: namespace='{}', relay='{}' (no JWT)", namespace, relay_url);
+    // Determine mode: standalone (--relay-url) or managed (--push-key)
+    // managed_info holds (push_key, instance_id) when in managed mode
+    let (namespace, relay_url, jwt, managed_info) = if let Some(relay_url) = args.relay_url {
+        // Standalone mode: direct relay connection, no Worker
+        let namespace = args.namespace
+            .ok_or_else(|| anyhow::anyhow!("--namespace is required with --relay-url"))?;
+        info!("Standalone mode: namespace='{}', relay='{}'", namespace, relay_url);
+        (namespace, relay_url, String::new(), None)
     } else {
-        info!("Authenticated: namespace='{}', relay='{}' (JWT received)", namespace, relay_url);
-    }
+        // Managed mode: authenticate with Worker
+        let push_key = args.push_key
+            .ok_or_else(|| anyhow::anyhow!("--push-key required (managed mode), or use --relay-url (standalone) or --test"))?;
+
+        let instance_id: String = {
+            let mut rng = rand::rng();
+            (0..16).map(|_| format!("{:x}", rng.random_range(0..16u8))).collect()
+        };
+        info!("Instance ID: {}", instance_id);
+
+        info!("Authenticating with worker at {}...", args.worker_url);
+        let client = reqwest::Client::new();
+
+        let auth_resp = client
+            .post(format!("{}/api/push/auth", args.worker_url))
+            .json(&serde_json::json!({
+                "push_key": push_key,
+                "instance_id": instance_id,
+            }))
+            .send()
+            .await?;
+
+        let status = auth_resp.status();
+        if !status.is_success() {
+            let body = auth_resp.text().await.unwrap_or_default();
+            if status.as_u16() == 409 {
+                return Err(anyhow::anyhow!("Namespace already in use by another instance: {}", body));
+            }
+            return Err(anyhow::anyhow!("Auth failed ({}): {}", status, body));
+        }
+
+        let auth_body: serde_json::Value = auth_resp.json().await?;
+        let namespace = auth_body["namespace"].as_str().unwrap_or("").to_string();
+        let relay_url = auth_body["relay_url"]
+            .as_str()
+            .unwrap_or(DEFAULT_RELAY)
+            .to_string();
+        let jwt = auth_body["jwt"].as_str().unwrap_or("").to_string();
+
+        if jwt.is_empty() {
+            info!("Authenticated: namespace='{}', relay='{}' (no JWT)", namespace, relay_url);
+        } else {
+            info!("Authenticated: namespace='{}', relay='{}' (JWT received)", namespace, relay_url);
+        }
+        (namespace, relay_url, jwt, Some((push_key, instance_id)))
+    };
 
     // Create shutdown channel
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
-    // Spawn push key heartbeat (lock renewal)
-    let hb_worker_url = args.worker_url.clone();
-    let hb_key = push_key.clone();
-    let hb_instance = instance_id.clone();
-    tokio::spawn(async move {
-        run_push_heartbeat(hb_worker_url, hb_key, hb_instance, shutdown_tx).await;
-    });
+    // Spawn push key heartbeat (lock renewal) — managed mode only
+    if let Some((ref push_key, ref instance_id)) = managed_info {
+        let hb_worker_url = args.worker_url.clone();
+        let hb_key = push_key.clone();
+        let hb_instance = instance_id.clone();
+        tokio::spawn(async move {
+            run_push_heartbeat(hb_worker_url, hb_key, hb_instance, shutdown_tx).await;
+        });
+    }
 
     // Create moq-lite content model
     let origin = Origin::produce();
@@ -215,33 +240,34 @@ async fn main() -> Result<()> {
 
     info!("Connected to Cloudflare relay");
 
-    // Announce broadcast to the worker
-    let dir_client = reqwest::Client::new();
-    let announce_resp = dir_client
-        .post(format!("{}/api/push/announce", args.worker_url))
-        .json(&serde_json::json!({
-            "push_key": push_key,
-            "namespace": namespace,
-            "relay_url": relay_url,
-            "instance_id": instance_id,
-        }))
-        .send()
-        .await?;
+    // Announce broadcast + spawn stats loop — managed mode only
+    if let Some((ref push_key, ref instance_id)) = managed_info {
+        let dir_client = reqwest::Client::new();
+        let announce_resp = dir_client
+            .post(format!("{}/api/push/announce", args.worker_url))
+            .json(&serde_json::json!({
+                "push_key": push_key,
+                "namespace": namespace,
+                "relay_url": relay_url,
+                "instance_id": instance_id,
+            }))
+            .send()
+            .await?;
 
-    if announce_resp.status().is_success() {
-        info!("Broadcast announced: {} -> {}", namespace, relay_url);
-    } else {
-        warn!("Failed to announce broadcast: {}", announce_resp.status());
+        if announce_resp.status().is_success() {
+            info!("Broadcast announced: {} -> {}", namespace, relay_url);
+        } else {
+            warn!("Failed to announce broadcast: {}", announce_resp.status());
+        }
+
+        let hb_worker = args.worker_url.clone();
+        let hb_key = push_key.clone();
+        let hb_ns = namespace.clone();
+        let hb_instance = instance_id.clone();
+        tokio::spawn(async move {
+            run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance, stats_ref).await;
+        });
     }
-
-    // Spawn stats + heartbeat loop
-    let hb_worker = args.worker_url.clone();
-    let hb_key = push_key.clone();
-    let hb_ns = namespace.clone();
-    let hb_instance = instance_id.clone();
-    tokio::spawn(async move {
-        run_stats_loop(hb_worker, hb_key, hb_ns, hb_instance, stats_ref).await;
-    });
 
     // Run until session closes or shutdown, polling transport stats every second
     let mut transport_interval = tokio::time::interval(Duration::from_secs(1));
@@ -274,17 +300,19 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Clean up
-    let client = reqwest::Client::new();
-    let _ = client
-        .delete(format!("{}/api/push/announce", args.worker_url))
-        .json(&serde_json::json!({
-            "push_key": push_key,
-            "namespace": namespace,
-        }))
-        .send()
-        .await;
-    info!("Broadcast removed from directory");
+    // Clean up — managed mode only
+    if let Some((ref push_key, _)) = managed_info {
+        let client = reqwest::Client::new();
+        let _ = client
+            .delete(format!("{}/api/push/announce", args.worker_url))
+            .json(&serde_json::json!({
+                "push_key": push_key,
+                "namespace": namespace,
+            }))
+            .send()
+            .await;
+        info!("Broadcast removed from directory");
+    }
 
     info!("moqpush-app shutting down");
     Ok(())
@@ -495,3 +523,4 @@ async fn run_stats_loop(
         }
     }
 }
+
