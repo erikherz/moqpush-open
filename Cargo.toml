@@ -4,6 +4,9 @@ resolver = "2"
 
 [workspace.dependencies]
 # MoQ transport + catalog
+# Uses erikherz/moq fork for MSF/CMSF catalog fields (targetLatency, SAP types).
+# Will switch to moq-dev/moq when these PRs are merged upstream:
+# - https://github.com/moq-dev/moq/compare/main...erikherz:moq:msf-cmsf-fields
 moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
 hang = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
 moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }

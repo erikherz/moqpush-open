@@ -15,12 +15,12 @@ mod publisher;
 
 use publisher::{Publisher, PublisherStats};
 
-/// Default Cloudflare MoQ relay
+/// Default relay (Cloudflare public MoQ relay)
 const DEFAULT_RELAY: &str = "https://draft-14.cloudflare.mediaoverquic.com";
 
 #[derive(Parser, Debug)]
 #[command(name = "moqpush-app")]
-#[command(about = "MoQ push publisher — accepts HTTP CMAF-IF from encoder and publishes to Cloudflare relay")]
+#[command(about = "MoQ push publisher — accepts HTTP CMAF-IF from encoder and publishes to any MoQ relay")]
 struct Args {
     /// Push key (managed mode: from moqcdn.net admin)
     #[arg(long, env = "MOQPUSH_KEY")]
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
     .await
     .map_err(|_| anyhow::anyhow!("Timeout: init segments not received within 300s"))?;
 
-    // Connect to Cloudflare relay as publisher
+    // Connect to relay as publisher
     info!("All init segments received — connecting to relay at {}...", relay_url);
 
     let mut relay_url_parsed: url::Url = relay_url.parse()?;
@@ -238,7 +238,7 @@ async fn main() -> Result<()> {
         .connect(relay_url_parsed.clone())
         .await?;
 
-    info!("Connected to Cloudflare relay");
+    info!("Connected to relay");
 
     // Announce broadcast + spawn stats loop — managed mode only
     if let Some((ref push_key, ref instance_id)) = managed_info {

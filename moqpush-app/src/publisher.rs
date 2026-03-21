@@ -1,5 +1,4 @@
 //! MoQ publisher: wraps moq-lite content model (Broadcast/Track/Group/Catalog).
-//! Cherry-picked from wowza-sender/src/publisher.rs, adapted for moqcdn-ingest.
 //!
 //! register_init() creates tracks + updates hang/MSF catalogs
 //! send_fragment() writes moof+mdat frames to track groups

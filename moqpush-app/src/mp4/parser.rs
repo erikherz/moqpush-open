@@ -1,4 +1,3 @@
-// Cherry-picked from wowza-sender/src/mp4/parser.rs
 // Full MP4 box parsing for CMAF-IF ingest: codec detection, trun rewriting,
 // init segment parsing, moof+mdat range scanning.
 

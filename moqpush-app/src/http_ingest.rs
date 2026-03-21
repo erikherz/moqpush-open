@@ -1,5 +1,4 @@
 //! HTTP CMAF-IF ingest server.
-//! Cherry-picked from viper-sender/src/ingest/http.rs, simplified for moqcdn.
 //!
 //! Accepts PUT/POST of init segments (.mp4/moov) and media segments (.m4s/moof+mdat).
 //! Auto-detects tracks from content (muxed and separate init support).
