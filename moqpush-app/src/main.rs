@@ -9,7 +9,6 @@ use tracing::{error, info, warn};
 use moq_lite::Origin;
 use moq_mux::CatalogProducer;
 
-mod ad_manager;
 mod http_ingest;
 mod mp4;
 mod publisher;
@@ -48,9 +47,6 @@ struct Args {
     #[arg(long)]
     test: bool,
 
-    /// Directory containing pre-encoded ad assets for ad insertion
-    #[arg(long)]
-    ad_dir: Option<String>,
 }
 
 /// Parse a track spec like "3v1a" into (video_count, audio_count).
@@ -176,31 +172,14 @@ async fn main() -> Result<()> {
         info!("Waiting for {} video + {} audio init segments before publishing catalog", expected_v, expected_a);
     }
 
-    // Load ad manager if --ad-dir is specified
-    let ad_mgr = if let Some(ref ad_dir) = args.ad_dir {
-        match ad_manager::AdManager::load(std::path::Path::new(ad_dir)) {
-            Ok(mgr) => {
-                info!("Ad manager loaded: {} ads from {}", mgr.list().len(), ad_dir);
-                Some(Arc::new(mgr))
-            }
-            Err(e) => {
-                warn!("Failed to load ads from {}: {} (continuing without ads)", ad_dir, e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     let first_init_notify = Arc::new(Notify::new());
 
     // Spawn HTTP ingest server
     info!("HTTP ingest starting on port {}", args.port);
     let http_shutdown = shutdown_rx.clone();
     let http_notify = first_init_notify.clone();
-    let http_ad_mgr = ad_mgr.clone();
     tokio::spawn(async move {
-        if let Err(e) = http_ingest::run(args.port, publisher, http_notify, http_shutdown, http_ad_mgr).await {
+        if let Err(e) = http_ingest::run(args.port, publisher, http_notify, http_shutdown).await {
             error!("HTTP ingest error: {}", e);
         }
     });

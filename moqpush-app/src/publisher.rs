@@ -10,20 +10,12 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use moq_lite::{BroadcastProducer, Group, GroupProducer, Track, TrackProducer};
 use moq_mux::CatalogProducer;
 
-use crate::ad_manager::Ad;
 use crate::mp4;
-
-/// Ad insertion state.
-#[derive(Debug, Clone, PartialEq)]
-enum AdState {
-    Live,
-    PlayingAd,
-}
 
 /// Video structure snapshot from the most recent segment.
 #[derive(Clone, Default)]
@@ -88,7 +80,7 @@ struct TrackState {
     track_type: TrackType,
     /// Signal from HTTP ingest: new segment (HTTP PUT) started, force new group.
     new_segment: bool,
-    /// Last baseMediaDecodeTime seen (pre-rebase), for ad timestamp continuity.
+    /// Last baseMediaDecodeTime seen (pre-rebase).
     last_bdt: Option<u64>,
     /// Last fragment's duration in timescale ticks (estimated from BDT deltas).
     last_frag_duration: Option<u64>,
@@ -125,8 +117,6 @@ pub struct Publisher {
     expected_audio: Option<u32>,
     /// Shared stats counters readable from the stats loop.
     pub stats: Arc<PublisherStats>,
-    /// Ad insertion state.
-    ad_state: AdState,
 }
 
 impl Publisher {
@@ -147,7 +137,6 @@ impl Publisher {
             expected_video: None,
             expected_audio: None,
             stats,
-            ad_state: AdState::Live,
         }
     }
 
@@ -392,11 +381,6 @@ impl Publisher {
         track_name: &str,
         data: &[u8],
     ) -> Result<()> {
-        // Drop live fragments while ad is playing
-        if self.ad_state == AdState::PlayingAd {
-            return Ok(());
-        }
-
         let state = self.tracks.get_mut(track_name)
             .ok_or_else(|| anyhow!("track not found: {}", track_name))?;
 
@@ -404,7 +388,7 @@ impl Publisher {
         let timescale = state.timescale;
         let track_type = state.track_type;
 
-        // Track last BDT for ad insertion timestamp continuity
+        // Track last BDT for fragment duration estimation
         if let Some(bdt_val) = bdt {
             if let Some(prev) = state.last_bdt {
                 if bdt_val > prev {
@@ -540,9 +524,6 @@ impl Publisher {
     /// Signal that a new HTTP PUT (segment) has started for this track.
     /// The next call to send_fragment() will create a new MoQ group.
     pub fn start_segment(&mut self, track_name: &str) {
-        if self.ad_state == AdState::PlayingAd {
-            return; // Drop live segments during ad playback
-        }
         if let Some(state) = self.tracks.get_mut(track_name) {
             state.new_segment = true;
             self.stats.segments_sent.fetch_add(1, Ordering::Relaxed);
@@ -660,244 +641,6 @@ impl Publisher {
             }
         }
         false
-    }
-
-    /// Prepare ad for insertion: match tracks, compute offsets, build timeslots.
-    ///
-    /// Ad init segments are sent as frames on the data stream (not via catalog),
-    /// so the player's moov detection in _onFrame handles codec switching.
-    /// This works with any ad content regardless of encoder.
-    ///
-    /// Returns (timeslots, pace_ms) — prepared fragment data grouped by timeslot,
-    /// and the recommended pacing interval in milliseconds between slots.
-    /// Timeslot 0 contains ad init segments (moov) for each track.
-    pub fn prepare_ad(&mut self, ad: &Ad) -> Result<(Vec<Vec<(String, Bytes)>>, u64)> {
-        info!("AD_INSERT: preparing ad '{}' (video_tracks={}, audio_frags={})",
-            ad.name, ad.video_tracks.len(), ad.audio_fragments.len());
-
-        // Compute BDT offsets in seconds (f64) for timescale-independent continuity.
-        // These will be converted to ad timescale when building each slot.
-        let mut bdt_offset_secs: HashMap<String, f64> = HashMap::new();
-        for (name, state) in self.tracks.iter() {
-            let last = state.last_bdt.unwrap_or(0);
-            let dur = state.last_frag_duration.unwrap_or(0);
-            let base = state.time_base.unwrap_or(0);
-            let offset_ticks = (last + dur).saturating_sub(base);
-            let ts = state.timescale.max(1) as f64;
-            let offset_secs = offset_ticks as f64 / ts;
-            bdt_offset_secs.insert(name.clone(), offset_secs);
-            info!("AD_INSERT: {} offset={:.3}s (last_bdt={}, dur={}, base={}, timescale={})",
-                name, offset_secs, last, dur, base, state.timescale);
-        }
-
-        // Match ad video tracks to publisher video tracks by resolution.
-        let mut video_matches: Vec<(String, &crate::ad_manager::AdVideoTrack)> = Vec::new();
-        let publisher_video_tracks: Vec<(String, u32)> = self.tracks.iter()
-            .filter(|(_, s)| s.track_type == TrackType::Video)
-            .map(|(n, _s)| {
-                let height = self.init_segments.get(n)
-                    .and_then(|init| mp4::extract_video_dimensions(init))
-                    .map(|(_, h)| h)
-                    .unwrap_or(0);
-                (n.clone(), height)
-            })
-            .collect();
-
-        for (track_name, height) in &publisher_video_tracks {
-            if let Some(ad_track) = ad.video_tracks.get(height) {
-                info!("AD_INSERT: matched {}p ad video → publisher track '{}'", height, track_name);
-                video_matches.push((track_name.clone(), ad_track));
-            } else {
-                warn!("AD_INSERT: no {}p ad video found for publisher track '{}'", height, track_name);
-            }
-        }
-
-        let audio_track = self.tracks.iter()
-            .find(|(_, s)| s.track_type == TrackType::Audio)
-            .map(|(n, _)| n.clone());
-
-        // Finish current live groups on ALL tracks
-        for (_name, state) in self.tracks.iter_mut() {
-            if let Some(mut group) = state.group.take() {
-                let _ = group.finish();
-            }
-        }
-
-        // Build timeslots. Slot 0 = ad init segments (moov frames).
-        // Slots 1..N = rebased media fragments.
-        let max_frags = video_matches.iter()
-            .map(|(_, t)| t.fragments.len())
-            .max()
-            .unwrap_or(0)
-            .max(ad.audio_fragments.len());
-
-        let mut timeslots: Vec<Vec<(String, Bytes)>> = Vec::with_capacity(max_frags + 1);
-
-        // Slot 0: ad init segments as frames
-        {
-            let mut init_slot: Vec<(String, Bytes)> = Vec::new();
-            for (track_name, ad_track) in &video_matches {
-                init_slot.push((track_name.clone(), ad_track.init.clone()));
-                info!("AD_INSERT: queued ad init for '{}' ({}B)", track_name, ad_track.init.len());
-            }
-            if let Some(ref at) = audio_track {
-                if let Some(ref init) = ad.audio_init {
-                    init_slot.push((at.clone(), init.clone()));
-                    info!("AD_INSERT: queued ad audio init for '{}' ({}B)", at, init.len());
-                }
-            }
-            timeslots.push(init_slot);
-        }
-
-        // Slots 1..N: rebased media fragments
-        for i in 0..max_frags {
-            let mut slot: Vec<(String, Bytes)> = Vec::new();
-
-            for (track_name, ad_track) in &video_matches {
-                if i >= ad_track.fragments.len() {
-                    continue;
-                }
-                let frag = &ad_track.fragments[i];
-                let offset_secs = *bdt_offset_secs.get(track_name).unwrap_or(&0.0);
-                let ad_ts = ad_track.timescale.max(1) as f64;
-                let offset_ticks = (offset_secs * ad_ts).round() as u64;
-                let default_dur = self.tracks.get(track_name).and_then(|s| s.default_sample_duration);
-
-                let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
-                let desired_bdt = offset_ticks + ad_bdt;
-                let rebased = mp4::set_decode_time(frag, desired_bdt);
-
-                let frame_data = if let Some(dur) = default_dur {
-                    Bytes::from(mp4::inject_trun_duration(&rebased, dur))
-                } else {
-                    Bytes::from(rebased)
-                };
-
-                slot.push((track_name.clone(), frame_data));
-            }
-
-            if let Some(ref at) = audio_track {
-                if i < ad.audio_fragments.len() {
-                    let frag = &ad.audio_fragments[i];
-                    let offset_secs = *bdt_offset_secs.get(at).unwrap_or(&0.0);
-                    let ad_audio_ts = ad.audio_timescale.max(1) as f64;
-                    let offset_ticks = (offset_secs * ad_audio_ts).round() as u64;
-                    let default_dur = self.tracks.get(at).and_then(|s| s.default_sample_duration);
-
-                    let ad_bdt = mp4::parse_base_decode_time(frag).unwrap_or(0);
-                    let desired_bdt = offset_ticks + ad_bdt;
-                    let rebased = mp4::set_decode_time(frag, desired_bdt);
-
-                    let frame_data = if let Some(dur) = default_dur {
-                        Bytes::from(mp4::inject_trun_duration(&rebased, dur))
-                    } else {
-                        Bytes::from(rebased)
-                    };
-
-                    slot.push((at.clone(), frame_data));
-                }
-            }
-
-            timeslots.push(slot);
-        }
-
-        // Groups are NOT opened here — publish_ad_slot opens/closes a group per slot,
-        // matching the live pattern (one group per segment). This ensures the relay
-        // forwards each ad fragment as a discrete group rather than one long-lived stream.
-
-        // Compute pacing interval from the first ad video track's BDT deltas.
-        // Uses the AD's timescale (not the live track's timescale).
-        let pace_ms = {
-            let mut pace: u64 = 1000; // default 1s
-            for (_track_name, ad_track) in &video_matches {
-                if ad_track.fragments.len() >= 2 {
-                    let bdt0 = mp4::parse_base_decode_time(&ad_track.fragments[0]).unwrap_or(0);
-                    let bdt1 = mp4::parse_base_decode_time(&ad_track.fragments[1]).unwrap_or(0);
-                    let ad_ts = ad_track.timescale.max(1);
-                    info!("AD_INSERT: pace calc: bdt0={} bdt1={} delta={} ad_timescale={}",
-                        bdt0, bdt1, bdt1.saturating_sub(bdt0), ad_ts);
-                    if bdt1 > bdt0 {
-                        pace = ((bdt1 - bdt0) * 1000) / ad_ts as u64;
-                        if pace > 0 {
-                            break;
-                        }
-                    }
-                }
-            }
-            pace.max(10) // floor at 10ms
-        };
-
-        self.ad_state = AdState::PlayingAd;
-        // +1 for the init slot
-        info!("AD_INSERT: prepared {} timeslots ({} media + 1 init) for ad '{}', pace={}ms",
-            timeslots.len(), max_frags, ad.name, pace_ms);
-
-        Ok((timeslots, pace_ms))
-    }
-
-    /// Publish one timeslot of ad fragments. Each slot gets its own group per track
-    /// (matching the live pattern: one group per segment), so the relay forwards
-    /// each ad fragment as a discrete group rather than one long-lived stream.
-    pub fn publish_ad_slot(&mut self, slot: &[(String, Bytes)]) -> Result<u32> {
-        let mut count: u32 = 0;
-        for (track_name, frame_data) in slot {
-            if let Some(state) = self.tracks.get_mut(track_name) {
-                // Close previous group if open
-                if let Some(mut prev) = state.group.take() {
-                    let _ = prev.finish();
-                }
-                // Open new group, write frame, leave open (finished on next slot or finish_ad)
-                let mut group = state.track.append_group()
-                    .map_err(|e| anyhow!("failed to create ad group for '{}': {}", track_name, e))?;
-                let len = frame_data.len() as u64;
-                group.write_frame(frame_data.clone())
-                    .map_err(|e| anyhow!("failed to write ad frame for '{}': {}", track_name, e))?;
-                self.stats.bytes_published.fetch_add(len, Ordering::Relaxed);
-                self.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
-                count += 1;
-                // Finish the group immediately so relay delivers it as a discrete unit
-                let _ = group.finish();
-            }
-        }
-        Ok(count)
-    }
-
-    /// Finish ad: close ad groups, open new live groups, send live init
-    /// segments as frames so the player reinitializes its decoder, then
-    /// resume accepting live fragments.
-    pub fn finish_ad(&mut self) {
-        // Close ad groups
-        for (_name, state) in self.tracks.iter_mut() {
-            if let Some(mut group) = state.group.take() {
-                let _ = group.finish();
-            }
-        }
-
-        // Open new groups and send live init segments as frames.
-        // The player detects moov boxes in incoming frames and calls
-        // setInitSegment → changeType, reinitializing the decoder.
-        let track_names: Vec<String> = self.tracks.keys().cloned().collect();
-        for track_name in &track_names {
-            if let Some(init_data) = self.init_segments.get(track_name).cloned() {
-                if let Some(state) = self.tracks.get_mut(track_name) {
-                    match state.track.append_group() {
-                        Ok(mut group) => {
-                            match group.write_frame(Bytes::from(init_data)) {
-                                Ok(_) => info!("AD_INSERT: sent live init for '{}' as frame", track_name),
-                                Err(e) => warn!("AD_INSERT: failed to write live init for '{}': {}", track_name, e),
-                            }
-                            // Finish this group so relay delivers init as discrete unit.
-                            // Next live fragment will create a new group via start_segment.
-                            let _ = group.finish();
-                        }
-                        Err(e) => warn!("AD_INSERT: failed to create resume group for '{}': {}", track_name, e),
-                    }
-                }
-            }
-        }
-
-        self.ad_state = AdState::Live;
-        info!("AD_INSERT: ad finished, live init segments sent, resuming live");
     }
 
 }

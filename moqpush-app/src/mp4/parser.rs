@@ -668,56 +668,6 @@ pub fn rebase_decode_time(fragment: &[u8], base: u64) -> Vec<u8> {
     out
 }
 
-/// Set the baseMediaDecodeTime in a moof fragment to an absolute value.
-/// Similar to rebase_decode_time but sets instead of subtracting.
-pub fn set_decode_time(fragment: &[u8], new_bdt: u64) -> Vec<u8> {
-    let mut out = fragment.to_vec();
-    let mut i = 0;
-    while i + 8 <= out.len() {
-        let size = u32::from_be_bytes([out[i], out[i+1], out[i+2], out[i+3]]) as usize;
-        if size < 8 { break; }
-        if &out[i+4..i+8] == b"moof" {
-            let moof_end = std::cmp::min(i + size, out.len());
-            let mut j = i + 8;
-            while j + 8 <= moof_end {
-                let bsize = u32::from_be_bytes([out[j], out[j+1], out[j+2], out[j+3]]) as usize;
-                if bsize < 8 { break; }
-                if &out[j+4..j+8] == b"traf" {
-                    let traf_end = std::cmp::min(j + bsize, out.len());
-                    let mut k = j + 8;
-                    while k + 8 <= traf_end {
-                        let tsize = u32::from_be_bytes([out[k], out[k+1], out[k+2], out[k+3]]) as usize;
-                        if tsize < 8 { break; }
-                        if &out[k+4..k+8] == b"tfdt" {
-                            let content_start = k + 8;
-                            if content_start + 4 > out.len() { break; }
-                            let version = out[content_start];
-                            if version == 1 {
-                                let bdt_off = content_start + 4;
-                                if bdt_off + 8 <= out.len() {
-                                    out[bdt_off..bdt_off+8].copy_from_slice(&new_bdt.to_be_bytes());
-                                }
-                            } else {
-                                let bdt_off = content_start + 4;
-                                if bdt_off + 4 <= out.len() {
-                                    let val = new_bdt as u32;
-                                    out[bdt_off..bdt_off+4].copy_from_slice(&val.to_be_bytes());
-                                }
-                            }
-                            return out;
-                        }
-                        k += tsize;
-                    }
-                }
-                j += bsize;
-            }
-            break;
-        }
-        i += size;
-    }
-    out
-}
-
 pub fn inject_trun_duration(fragment: &[u8], default_duration: u32) -> Vec<u8> {
     let mut i = 0;
     let mut moof_start = None;

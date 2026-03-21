@@ -1,69 +1,121 @@
-# MoQpush
+# moqpush
 
-Global MoQ CDN for Low Latency CMAF.
+Open source MoQ publisher. Takes CMAF-IF input from any encoder (Ateme, GPAC, FFmpeg), publishes to any MoQ relay via MoQ Transport.
 
-MoQpush accepts CMAF segments from your encoder via HTTP PUT, publishes them to Cloudflare's MoQ relay network, and orchestrates edge servers to warm relays worldwide. Viewers watch via Shaka Player with MoQ streaming support in a browser.
+## Quick Start
 
-## Components
+### Standalone (no account, BYO relay)
 
-| Component | Description |
-|---|---|
-| **moqpush-app** | Publisher binary. Accepts CMAF-IF ingest from your encoder, authenticates with the worker, and publishes to the Cloudflare MoQ relay. |
-| **moqpush-puller** | Edge pull server. Connects to the worker via WebSocket, receives pull/stop commands, and subscribes to the relay to warm the network for a region. |
-| **moqpush-worker** | Cloudflare Worker + Durable Objects. Handles auth, namespace management, orchestration, stats, and serves the web UI. |
+```bash
+moqpush-app --relay-url https://your-relay:443 --tracks 2v1a --target-latency 500
 
-## moqpush-app
-
-```
-./moqpush-app --push-key YOUR_PUSH_KEY_HERE
+# Point your encoder's HTTP CMAF-IF output at port 9078
+# Open player/moq-player.html in Chrome to watch
 ```
 
-| Param | Description | Default |
-|---|---|---|
-| `--push-key` | Push key from moqpush admin | env: `MOQPUSH_KEY` |
-| `--worker-url` | Worker URL for auth + heartbeat + stats | `https://moqpush.com` |
-| `--port` | Port for HTTP CMAF-IF ingest | `8888` |
-| `--test` | Accept and print incoming data without connecting to worker or relay | |
+### Managed hosting via moqcdn.net (free tier)
 
-## moqpush-puller
+1. Create an account at [moqcdn.net](https://moqcdn.net)
+2. Create a namespace → get a push key
+3. Run the publisher:
 
-```
-./moqpush-puller --node naw --region us-west --secret YOUR_SECRET
+```bash
+moqpush-app --push-key mpk_XXX --worker-url https://moqcdn.net --tracks 2v1a --target-latency 500
 ```
 
-| Param | Description | Default |
-|---|---|---|
-| `--node` | Node name (e.g. `naw`, `nac`, `nae`, `eu1`, `in1`) | env: `MOQPUSH_NODE` |
-| `--region` | Region label (e.g. `us-west`, `us-central`, `us-east`, `eu-west`, `ap-south`) | env: `MOQPUSH_REGION` |
-| `--worker-url` | Worker URL for WebSocket orchestration | `https://moqpush.com` |
-| `--port` | Health check HTTP port | `8080` |
-| `--secret` | Puller secret for authentication | env: `MOQPUSH_PULLER_SECRET` |
+4. Watch at `moqcdn.net/{namespace}`
+
+Free tier uses Cloudflare's MoQ relay with Shaka player. No relay to run.
+
+### Premium CDN (moqcdn.net)
+
+Same command, same binary. Premium namespaces automatically route to the moqcdn global relay network with Viper player, ABR, relay racing, and sub-second latency.
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| --relay-url | — | Relay URL (standalone mode, no Worker) |
+| --push-key | — | Push key (managed mode, from moqcdn.net) |
+| --worker-url | — | Worker URL (managed mode) |
+| --tracks | — | Wait for N video + M audio inits (e.g. `2v1a`) |
+| --target-latency | 2000 | Target latency in ms (published in catalog) |
+| --port | 9078 | HTTP CMAF-IF ingest port |
+| --tls-disable-verify | false | Skip TLS verification (testing) |
+
+## Player
+
+The `player/` directory contains standalone HTML players that work from `file://` in Chrome — no server needed:
+
+| File | Description |
+|------|-------------|
+| `moq-player.html` | Interactive: enter relay URL + namespace, click Play |
+| `moq-player-local.html` | Same but with Shaka JS embedded (~2MB, zero internet needed) |
+| `player-remote.html` | Edit two constants, loads Shaka from CDN |
+| `player-local.html` | Edit two constants, uses bundled `shaka-player.js` |
+| `shaka-player.js` | Shaka Player experimental build with MoQ/MSF support |
+
+### Minimal player example
+
+```html
+<script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
+<video id="v" controls autoplay muted></video>
+<script>
+  shaka.polyfill.installAll();
+  const player = new shaka.Player();
+  player.attach(document.getElementById('v'));
+  player.configure({
+    streaming: { lowLatencyMode: true },
+    manifest: { msf: { namespaces: ['YOUR_NAMESPACE'] } }
+  });
+  player.load('https://YOUR_RELAY/', undefined, 'application/msf');
+</script>
+```
+
+Works from a local HTML file. No HTTPS hosting required — WebTransport handles encryption.
+
+## How It Works
+
+```
+Encoder (Ateme/GPAC/FFmpeg)
+     | HTTP PUT (CMAF-IF, chunked transfer)
+     v
+moqpush-app (this binary)
+     | MoQ Transport (QUIC/WebTransport)
+     v
+MoQ Relay (Cloudflare, moqcdn, or self-hosted)
+     | MoQ Transport (WebTransport)
+     v
+Browser (Shaka Player or Viper Player)
+```
+
+- Encoder sends CMAF-IF segments via HTTP PUT with chunked transfer
+- Each PUT is one segment (~1.8s), containing ~16 fragments streamed in real-time
+- moqpush-app parses fragments as they arrive and publishes immediately via MoQ
+- MSF catalog with codec info, init segments, and target latency published automatically
+- `--tracks` waits for all init segments before connecting (multi-quality ABR support)
+- Protocol auto-negotiated with relay (moq-transport draft-14, moq-lite-02/03)
 
 ## Building
 
-```
-cargo build --release -p moqpush-app
-cargo build --release -p moqpush-puller
-```
-
-Binaries are output to `target/release/`.
-
-## Architecture
-
-```
-Encoder (CMAF-IF HTTP PUT)
-    |
-    v
-moqpush-app ---> Cloudflare MoQ Relay ---> moqpush-puller (per region)
-    |                                           |
-    v                                           v
-moqpush-worker (auth, orchestration)     Warm relay cache
-    |
-    v
-Shaka Player (MoQ/WebTransport in browser)
+```bash
+git clone https://github.com/erikherz/moqpush.git
+cd moqpush
+cargo build --release
+# Binary at target/release/moqpush-app
 ```
 
-1. Sign in at [moqpush.com/admin](https://moqpush.com/admin) and create a namespace
-2. Run `moqpush-app` with your push key
-3. Point your encoder (Ateme Titan Live, FFmpeg, GPAC) to `http://localhost:8888`
-4. Share `https://moqpush.com/your-namespace` with viewers
+## Relay
+
+For standalone use, run Luke Curley's open source MoQ relay:
+
+```bash
+git clone https://github.com/moq-dev/moq.git
+cd moq
+cargo build --release --bin moq-relay
+./target/release/moq-relay relay.toml
+```
+
+## License
+
+Apache 2.0

@@ -20,7 +20,6 @@ use tokio::net::TcpListener;
 use tokio::sync::{watch, Mutex, Notify};
 use tracing::{debug, error, info, warn};
 
-use crate::ad_manager::AdManager;
 use crate::mp4::{
     has_moof, has_moov, parse_handler_type, parse_moof_mdat_ranges,
     fragment_starts_with_idr, parse_base_decode_time,
@@ -136,37 +135,15 @@ impl TrackResolver {
 }
 
 type SharedState = Arc<Mutex<(TrackResolver, Publisher)>>;
-type SharedAdManager = Option<Arc<AdManager>>;
 
 async fn handle_request(
     req: Request<Incoming>,
     state: SharedState,
     first_init_notify: Arc<Notify>,
     remote_addr: SocketAddr,
-    ad_mgr: SharedAdManager,
 ) -> Result<Response<String>, hyper::Error> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
-
-    // Admin ad insertion endpoint: POST /admin/ad?name=my-ad
-    if path == "/admin/ad" && method == Method::POST {
-        return handle_ad_trigger(req, state, ad_mgr).await;
-    }
-
-    // Admin endpoint: GET /admin/ads — list loaded ads
-    if path == "/admin/ads" && method == Method::GET {
-        let ads = if let Some(ref mgr) = ad_mgr {
-            mgr.list().iter().map(|s| s.to_string()).collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
-        let json = serde_json::json!({ "ads": ads });
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/json")
-            .body(json.to_string())
-            .unwrap());
-    }
 
     if method != Method::PUT && method != Method::POST {
         return Ok(Response::builder()
@@ -343,126 +320,11 @@ async fn handle_request(
         .unwrap())
 }
 
-async fn handle_ad_trigger(
-    req: Request<Incoming>,
-    state: SharedState,
-    ad_mgr: SharedAdManager,
-) -> Result<Response<String>, hyper::Error> {
-    let ad_mgr = match ad_mgr {
-        Some(ref mgr) => mgr,
-        None => {
-            return Ok(Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body("No ad directory configured (use --ad-dir)".to_string())
-                .unwrap());
-        }
-    };
-
-    // Parse query params
-    let query = req.uri().query().unwrap_or("");
-    let params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
-        .into_owned()
-        .collect();
-
-    let ad_name = match params.get("name") {
-        Some(n) => n.clone(),
-        None => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body("Missing 'name' query parameter".to_string())
-                .unwrap());
-        }
-    };
-
-    let ad = match ad_mgr.get(&ad_name) {
-        Some(a) => a.clone(),
-        None => {
-            let available = ad_mgr.list().join(", ");
-            return Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(format!("Ad '{}' not found. Available: {}", ad_name, available))
-                .unwrap());
-        }
-    };
-
-    // Prepare the ad: match tracks, build timeslots with init-as-frame
-    let (timeslots, pace_ms) = {
-        let mut guard = state.lock().await;
-        let (ref _resolver, ref mut publisher) = *guard;
-        match publisher.prepare_ad(&ad) {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Ad preparation failed: {}", e);
-                return Ok(Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(format!("Ad preparation failed: {}", e))
-                    .unwrap());
-            }
-        }
-    };
-
-    // Publish fragments paced at real-time rate derived from fragment BDT deltas.
-    let total_slots = timeslots.len();
-    let mut total_frags: u32 = 0;
-    let pace_interval = std::time::Duration::from_millis(pace_ms);
-    info!("AD_INSERT: publishing {} slots at {}ms pace", total_slots, pace_ms);
-
-    for (i, slot) in timeslots.iter().enumerate() {
-        let slot_start = std::time::Instant::now();
-
-        {
-            let mut guard = state.lock().await;
-            let (ref _resolver, ref mut publisher) = *guard;
-            match publisher.publish_ad_slot(slot) {
-                Ok(count) => total_frags += count,
-                Err(e) => {
-                    warn!("Ad slot {} failed: {}", i, e);
-                    break;
-                }
-            }
-        }
-
-        // Pace slots: init slot gets a short delay (100ms), media slots get full pacing
-        if i + 1 < total_slots {
-            let delay = if i == 0 {
-                std::time::Duration::from_millis(100)
-            } else {
-                pace_interval
-            };
-            let elapsed = slot_start.elapsed();
-            if elapsed < delay {
-                tokio::time::sleep(delay - elapsed).await;
-            }
-        }
-    }
-
-    // Finish ad groups
-    {
-        let mut guard = state.lock().await;
-        let (ref _resolver, ref mut publisher) = *guard;
-        publisher.finish_ad();
-    }
-
-    let json = serde_json::json!({
-        "ok": true,
-        "ad": ad_name,
-        "slots_published": total_slots,
-        "fragments_published": total_frags,
-    });
-    info!("AD_INSERT: ad '{}' complete — {} slots, {} fragments", ad_name, total_slots, total_frags);
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(json.to_string())
-        .unwrap())
-}
-
 pub async fn run(
     port: u16,
     publisher: Publisher,
     first_init_notify: Arc<Notify>,
     mut shutdown: watch::Receiver<bool>,
-    ad_mgr: SharedAdManager,
 ) -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(addr).await?;
@@ -499,14 +361,12 @@ pub async fn run(
                 let io = TokioIo::new(stream);
                 let state = state.clone();
                 let notify = first_init_notify.clone();
-                let ad_mgr = ad_mgr.clone();
 
                 tokio::spawn(async move {
                     let service = service_fn(move |req| {
                         let state = state.clone();
                         let notify = notify.clone();
-                        let ad_mgr = ad_mgr.clone();
-                        async move { handle_request(req, state, notify, remote_addr, ad_mgr).await }
+                        async move { handle_request(req, state, notify, remote_addr).await }
                     });
 
                     if let Err(e) = http1::Builder::new()

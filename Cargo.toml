@@ -1,5 +1,5 @@
 [workspace]
-members = ["moqpush-app", "moqpush-puller"]
+members = ["moqpush-app"]
 resolver = "2"
 
 [workspace.dependencies]
