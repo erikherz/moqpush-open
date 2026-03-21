@@ -227,6 +227,11 @@ async fn main() -> Result<()> {
     info!("All init segments received — connecting to relay at {}...", relay_url);
 
     let mut relay_url_parsed: url::Url = relay_url.parse()?;
+    // In standalone mode, append namespace to URL path for relay auth matching
+    if managed_info.is_none() {
+        let path = relay_url_parsed.path().trim_end_matches('/').to_string();
+        relay_url_parsed.set_path(&format!("{}/{}", path, namespace));
+    }
     if !jwt.is_empty() {
         relay_url_parsed.query_pairs_mut().append_pair("jwt", &jwt);
     }
