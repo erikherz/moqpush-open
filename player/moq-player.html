@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head><title>MoQ Player</title></head>
+<body style="background:#111;color:#eee;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div id="setup" style="text-align:center">
+  <h1 style="margin-bottom:4px">MoQ Player</h1>
+  <p style="color:#888;margin-bottom:16px">Enter a MoQ relay URL and namespace to watch live video.<br>No server needed — just open this file in Chrome.</p>
+  <input id="relay" placeholder="Relay URL" value="draft-14.cloudflare.mediaoverquic.com"
+    style="width:420px;padding:10px;margin:6px;background:#222;border:1px solid #444;color:#eee;border-radius:4px;font-size:14px"><br>
+  <input id="ns" placeholder="Namespace"
+    style="width:420px;padding:10px;margin:6px;background:#222;border:1px solid #444;color:#eee;border-radius:4px;font-size:14px"><br>
+  <button onclick="go()" style="padding:10px 40px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;margin-top:12px">Play</button>
+</div>
+<script>
+function go() {
+  var relay = document.getElementById('relay').value.trim();
+  var ns = document.getElementById('ns').value.trim();
+  if (!relay || !ns) return alert('Enter relay URL and namespace');
+  var url = relay.startsWith('https://') ? relay : 'https://' + relay;
+  document.open();
+  document.write('<!DOCTYPE html><html><head><title>MoQ: ' + ns + '</title>' +
+    '<script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"><\/script>' +
+    '</head><body style="background:#000;margin:0;display:flex;align-items:center;justify-content:center;height:100vh">' +
+    '<video id="v" controls autoplay muted style="width:100%;max-width:1280px"></video>' +
+    '<script>' +
+    'shaka.polyfill.installAll();' +
+    'var p=new shaka.Player();' +
+    'p.attach(document.getElementById("v"));' +
+    'p.configure({streaming:{lowLatencyMode:true,rebufferingGoal:0.5,bufferingGoal:1.5},manifest:{msf:{namespaces:["' + ns + '"]}}});' +
+    'p.addEventListener("error",function(e){console.error("Shaka error:",e.detail)});' +
+    'p.load("' + url.replace(/\/+$/, '') + '/",undefined,"application/msf");' +
+    '<\/script></body></html>');
+  document.close();
+}
+</script>
+</body>
+</html>

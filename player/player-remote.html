@@ -1,0 +1,27 @@
+<!-- MoQ Player — loads Shaka from CDN -->
+<!DOCTYPE html>
+<html>
+<head>
+<title>MoQ Player</title>
+<script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
+</head>
+<body style="background:#000;margin:0;display:flex;align-items:center;justify-content:center;height:100vh">
+<video id="video" controls autoplay muted style="width:100%;max-width:1280px"></video>
+<script>
+  // ---- CONFIGURE THESE ----
+  const RELAY_URL = 'https://draft-14.cloudflare.mediaoverquic.com/';
+  const NAMESPACE = 'YOUR_NAMESPACE';
+  // -------------------------
+
+  shaka.polyfill.installAll();
+  const player = new shaka.Player();
+  player.attach(document.getElementById('video'));
+  player.configure({
+    streaming: { lowLatencyMode: true, rebufferingGoal: 0.5, bufferingGoal: 1.5 },
+    manifest: { msf: { namespaces: [NAMESPACE] } }
+  });
+  player.addEventListener('error', (e) => console.error('Shaka error:', e.detail));
+  player.load(RELAY_URL, undefined, 'application/msf');
+</script>
+</body>
+</html>
