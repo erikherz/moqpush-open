@@ -4,14 +4,13 @@ Open source MoQ publisher. Takes CMAF-IF input from any encoder (Ateme, GPAC, FF
 
 ## Quick Start
 
-### Standalone (no account, BYO relay)
+### Standalone (no MoQcdn account, own MoQ relay)
 
 ```bash
 # Publish
-moqpush-app --relay-url https://your-relay:443 --namespace my-stream --tracks 2v1a --target-latency 500
+moqpush-app --relay-url https://your-relay:443 --namespace my-stream --tracks 2v1a --target-latency 500 --port 9078
 
-# Point your encoder's HTTP CMAF-IF output at port 9078
-# Open player/moq-player.html in Chrome, enter relay URL + namespace
+# Point your encoder's HTTP CMAF-IF output at the specified port
 ```
 
 ### Test mode (verify encoder output, no relay needed)
