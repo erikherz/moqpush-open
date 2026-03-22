@@ -4,14 +4,16 @@ resolver = "2"
 
 [workspace.dependencies]
 # MoQ transport + catalog
-# Uses erikherz/moq fork for MSF/CMSF catalog fields (targetLatency, SAP types).
-# Will switch to moq-dev/moq when these PRs are merged upstream:
-# - https://github.com/moq-dev/moq/compare/main...erikherz:moq:msf-cmsf-fields
-moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
-hang = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
-moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
-moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
-moq-native = { git = "https://github.com/erikherz/moq", branch = "moqcdn" }
+# Thin fork of moq-dev/moq with 4 additions:
+# - MSF draft-00 catalog fields (targetLatency, generatedAt, namespace)
+# - CMSF draft-00 SAP fields + event timeline
+# - Session::stats() for QUIC transport stats
+# Will switch to moq-dev/moq main when PRs are merged upstream.
+moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+hang = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-native = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
