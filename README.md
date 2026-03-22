@@ -16,7 +16,7 @@ moqpush-app --relay-url https://your-relay:443 --namespace my-stream --tracks 2v
 ### Test mode (verify encoder output, no relay needed)
 
 ```bash
-moqpush-app --test
+moqpush-app --test --port 9078
 
 # Point your encoder at port 9078 — fragment info printed to console
 ```
@@ -54,18 +54,6 @@ Same command, same binary. Premium namespaces automatically route to the moqcdn 
 | --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
 
 ## Player
-
-The `player/` directory contains standalone HTML players that work from `file://` in Chrome — no server needed:
-
-| File | Description |
-|------|-------------|
-| `moq-player.html` | Interactive: enter relay URL + namespace, click Play |
-| `moq-player-local.html` | Same but with Shaka JS embedded (~2MB, zero internet needed) |
-| `player-remote.html` | Edit two constants, loads Shaka from CDN |
-| `player-local.html` | Edit two constants, uses bundled `shaka-player.js` |
-| `shaka-player.js` | Shaka Player experimental build with MoQ/MSF support |
-
-### Minimal player example
 
 ```html
 <script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
