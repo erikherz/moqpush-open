@@ -74,21 +74,10 @@ No relay to run. Global relay network with Viper player, ABR, relay racing, and 
 ## Building
 
 ```bash
-git clone https://github.com/erikherz/moqpush.git
-cd moqpush
+git clone https://github.com/erikherz/moqpush-open.git
+cd moqpush-open
 cargo build --release
 # Binary at target/release/moqpush-app
-```
-
-## Relay
-
-For standalone use, run Luke Curley's open source MoQ relay:
-
-```bash
-git clone https://github.com/moq-dev/moq.git
-cd moq
-cargo build --release --bin moq-relay
-./target/release/moq-relay relay.toml
 ```
 
 ## License
