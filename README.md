@@ -1,6 +1,6 @@
 # moqpush
 
-Open source MoQ publisher. Takes CMAF-IF input and publishes to any MoQ relay via MoQ Transport.
+Open source MoQ publisher. Takes CMAF-IF input and publishes to any MoQ relay via MoQ Transport. Built on [moq-dev/moq](https://github.com/moq-dev/moq) by [Luke Curley](https://github.com/kixelated).
 
 ## Quick Start
 
@@ -83,6 +83,12 @@ cd moqpush-open
 cargo build --release
 # Binary at target/release/moqpush-app
 ```
+
+## Acknowledgments
+
+moqpush is built on [moq-dev/moq](https://github.com/moq-dev/moq), Luke Curley's MoQ Transport implementation in Rust. The `moq-lite`, `moq-mux`, `moq-msf`, and `moq-native` crates handle all MoQ protocol, catalog, and QUIC transport logic.
+
+Luke's `moq-cli publish` command supports file and pipe input via its `Fmp4` importer. moqpush adds an HTTP CMAF-IF ingest server on top — accepting concurrent PUT/POST requests from encoders (Ateme, FFmpeg, GPAC) and publishing to any MoQ relay. The custom MP4 parser and publisher were needed because HTTP ingest requires handling multiple concurrent track uploads, init segment coordination, and catalog generation before connecting to the relay — patterns that don't map cleanly to the CLI's single-stream AsyncRead model.
 
 ## License
 
