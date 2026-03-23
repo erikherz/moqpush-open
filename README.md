@@ -1,6 +1,6 @@
 # moqpush
 
-Open source MoQ publisher. Takes CMAF-IF input and publishes to any MoQ relay via MoQ Transport. Built on [moq-dev/moq](https://github.com/moq-dev/moq) by [Luke Curley](https://github.com/kixelated).
+Open source MoQ publisher. Takes DASH-IF CMAF Ingest input and publishes to any MoQ relay via MoQ Transport. Built on [moq-dev/moq](https://github.com/moq-dev/moq) by [Luke Curley](https://github.com/kixelated).
 
 ## Quick Start
 
@@ -9,7 +9,7 @@ Open source MoQ publisher. Takes CMAF-IF input and publishes to any MoQ relay vi
 ```bash
 RUST_LOG=info moqpush-app --namespace my-stream --tracks 2v1a --target-latency 500 --port 9078
 
-# Point your encoder's HTTP CMAF-IF output at port 9078
+# Point your encoder's HTTP DASH-IF CMAF Ingest output at port 9078
 ```
 
 Connects to Cloudflare's public MoQ relay by default. Use `--relay-url` to override.
@@ -72,12 +72,12 @@ No relay to run. Global relay network with Viper player, ABR, relay racing, and 
 | --worker-url | moqcdn.net | Worker URL (managed mode) |
 | --tracks | — | Wait for N video + M audio inits (e.g. `2v1a`) |
 | --target-latency | 2000 | Target latency in ms (published in catalog) |
-| --port | 9078 | HTTP CMAF-IF ingest port |
+| --port | 9078 | HTTP DASH-IF CMAF Ingest port |
 | --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
 
 ## Creating Source Files
 
-See [ffmpeg-gpac-how-to.md](ffmpeg-gpac-how-to.md) for creating CMAF-IF source files with FFmpeg and pushing them to moqpush with GPAC.
+See [ffmpeg-gpac-how-to.md](ffmpeg-gpac-how-to.md) for creating DASH-IF CMAF Ingest source files with FFmpeg and pushing them to moqpush with GPAC.
 
 ## Building
 
@@ -92,7 +92,7 @@ cargo build --release
 
 moqpush is built on [moq-dev/moq](https://github.com/moq-dev/moq), Luke Curley's MoQ Transport implementation in Rust. The `moq-lite`, `moq-mux`, `moq-msf`, and `moq-native` crates handle all MoQ protocol, catalog, and QUIC transport logic.
 
-Luke's `moq-cli publish` command supports file and pipe input via its `Fmp4` importer. moqpush adds an HTTP CMAF-IF ingest server on top — accepting concurrent PUT/POST requests from encoders (Ateme, FFmpeg, GPAC) and publishing to any MoQ relay. The custom MP4 parser and publisher were needed because HTTP ingest requires handling multiple concurrent track uploads, init segment coordination, and catalog generation before connecting to the relay — patterns that don't map cleanly to the CLI's single-stream AsyncRead model.
+Luke's `moq-cli publish` command supports file and pipe input via its `Fmp4` importer. moqpush adds an HTTP DASH-IF CMAF Ingest server on top — accepting concurrent PUT/POST requests from encoders (Ateme, FFmpeg, GPAC) and publishing to any MoQ relay. The custom MP4 parser and publisher were needed because HTTP ingest requires handling multiple concurrent track uploads, init segment coordination, and catalog generation before connecting to the relay — patterns that don't map cleanly to the CLI's single-stream AsyncRead model.
 
 ## License
 
