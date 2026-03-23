@@ -7,9 +7,9 @@ Open source MoQ publisher. Takes CMAF-IF input from any encoder (Ateme, GPAC, FF
 ### Standalone (free, uses Cloudflare's public MoQ relay)
 
 ```bash
-moqpush-app --namespace my-stream --tracks 2v1a --target-latency 500 --port 9078
+RUST_LOG=info moqpush-app --namespace my-stream --tracks 2v1a --target-latency 500 --port 8009
 
-# Point your encoder's HTTP CMAF-IF output at port 9078
+# Point your encoder's HTTP CMAF-IF output at port 8009
 ```
 
 Connects to Cloudflare's public MoQ relay by default. Use `--relay-url` to override.
@@ -29,7 +29,7 @@ moqpush-app --test --port 9078
 3. Run the publisher:
 
 ```bash
-moqpush-app --push-key mpk_XXX --worker-url https://moqcdn.net --tracks 2v1a --target-latency 500
+moqpush-app --push-key mpk_XXX --tracks 2v1a --target-latency 500
 ```
 
 4. Watch at `moqcdn.net/{namespace}`
