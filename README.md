@@ -1,6 +1,6 @@
 # moqpush
 
-Open source MoQ publisher. Takes CMAF-IF input from any encoder (Ateme, GPAC, FFmpeg), publishes to any MoQ relay via MoQ Transport.
+Open source MoQ publisher. Takes CMAF-IF input and publishes to any MoQ relay via MoQ Transport.
 
 ## Quick Start
 
