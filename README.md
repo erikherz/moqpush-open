@@ -4,14 +4,15 @@ Open source MoQ publisher. Takes CMAF-IF input from any encoder (Ateme, GPAC, FF
 
 ## Quick Start
 
-### Standalone (no MoQcdn account, own MoQ relay)
+### Standalone (free, uses Cloudflare's public MoQ relay)
 
 ```bash
-# Publish
-moqpush-app --relay-url https://your-relay:443 --namespace my-stream --tracks 2v1a --target-latency 500 --port 9078
+moqpush-app --namespace my-stream --tracks 2v1a --target-latency 500 --port 9078
 
-# Point your encoder's HTTP CMAF-IF output at the specified port
+# Point your encoder's HTTP CMAF-IF output at port 9078
 ```
+
+Connects to Cloudflare's public MoQ relay by default. Use `--relay-url` to override.
 
 ### Test mode (verify encoder output, no relay needed)
 
@@ -21,7 +22,7 @@ moqpush-app --test --port 9078
 # Point your encoder at port 9078 — fragment info printed to console
 ```
 
-### Managed hosting via moqcdn.net (free tier)
+### Managed CDN via moqcdn.net
 
 1. Create an account at [moqcdn.net](https://moqcdn.net)
 2. Create a namespace → get a push key
@@ -33,19 +34,15 @@ moqpush-app --push-key mpk_XXX --worker-url https://moqcdn.net --tracks 2v1a --t
 
 4. Watch at `moqcdn.net/{namespace}`
 
-Free tier uses Cloudflare's MoQ relay with Shaka player. No relay to run.
-
-### Premium CDN (moqcdn.net)
-
-Same command, same binary. Premium namespaces automatically route to the moqcdn global relay network with Viper player, ABR, relay racing, and sub-second latency.
+No relay to run. Global relay network with Viper player, ABR, relay racing, and sub-second latency.
 
 ## Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | --test | | Test mode: print fragment info, no relay |
-| --relay-url | — | Relay URL (standalone mode, no Worker) |
-| --namespace | — | Namespace (required with --relay-url) |
+| --namespace | — | Namespace (standalone mode, no Worker) |
+| --relay-url | Cloudflare | Relay URL (standalone mode, override default) |
 | --push-key | — | Push key (managed mode, from moqcdn.net) |
 | --worker-url | moqcdn.net | Worker URL (managed mode) |
 | --tracks | — | Wait for N video + M audio inits (e.g. `2v1a`) |
@@ -54,6 +51,8 @@ Same command, same binary. Premium namespaces automatically route to the moqcdn 
 | --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
 
 ## Player
+
+Save this as an HTML file and open in Chrome — no server needed:
 
 ```html
 <script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
@@ -64,13 +63,13 @@ Same command, same binary. Premium namespaces automatically route to the moqcdn 
   player.attach(document.getElementById('v'));
   player.configure({
     streaming: { lowLatencyMode: true },
-    manifest: { msf: { namespaces: ['YOUR_NAMESPACE'] } }
+    manifest: { msf: { namespaces: ['my-stream'] } }
   });
-  player.load('https://YOUR_RELAY/', undefined, 'application/msf');
+  player.load('https://draft-14.cloudflare.mediaoverquic.com/', undefined, 'application/msf');
 </script>
 ```
 
-Works from a local HTML file. No HTTPS hosting required — WebTransport handles encryption.
+Replace `my-stream` with your namespace. Works from `file://` — WebTransport handles encryption.
 
 ## How It Works
 

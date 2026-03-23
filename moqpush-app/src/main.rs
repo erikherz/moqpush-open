@@ -30,11 +30,11 @@ struct Args {
     #[arg(long, default_value = "https://moqcdn.net")]
     worker_url: String,
 
-    /// Relay URL (standalone mode: connect directly, no Worker auth)
+    /// Relay URL (standalone mode: defaults to Cloudflare public relay)
     #[arg(long)]
     relay_url: Option<String>,
 
-    /// Namespace (standalone mode: required with --relay-url)
+    /// Namespace (standalone mode: connect directly, no Worker auth)
     #[arg(long)]
     namespace: Option<String>,
 
@@ -110,18 +110,17 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Determine mode: standalone (--relay-url) or managed (--push-key)
+    // Determine mode: standalone (--namespace) or managed (--push-key)
     // managed_info holds (push_key, instance_id) when in managed mode
-    let (namespace, relay_url, jwt, managed_info) = if let Some(relay_url) = args.relay_url {
+    let (namespace, relay_url, jwt, managed_info) = if let Some(namespace) = args.namespace {
         // Standalone mode: direct relay connection, no Worker
-        let namespace = args.namespace
-            .ok_or_else(|| anyhow::anyhow!("--namespace is required with --relay-url"))?;
+        let relay_url = args.relay_url.unwrap_or_else(|| DEFAULT_RELAY.to_string());
         info!("Standalone mode: namespace='{}', relay='{}'", namespace, relay_url);
         (namespace, relay_url, String::new(), None)
     } else {
         // Managed mode: authenticate with Worker
         let push_key = args.push_key
-            .ok_or_else(|| anyhow::anyhow!("--push-key required (managed mode), or use --relay-url (standalone) or --test"))?;
+            .ok_or_else(|| anyhow::anyhow!("--push-key required (managed mode), or use --namespace (standalone) or --test"))?;
 
         let instance_id: String = {
             let mut rng = rand::rng();
