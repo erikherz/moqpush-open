@@ -43,7 +43,9 @@ Save this as an HTML file and open in Chrome — no server needed:
 
 Replace `my-stream` with your namespace. Works from `file://` — WebTransport handles encryption.
 
-### Managed CDN via moqcdn.net
+---
+
+## Managed CDN via moqcdn.net
 
 1. Create an account at [moqcdn.net](https://moqcdn.net)
 2. Create a namespace → get a push key
@@ -56,6 +58,8 @@ moqpush-app --push-key mpk_XXX --tracks 2v1a --target-latency 500
 4. Watch at `moqcdn.net/{namespace}`
 
 No relay to run. Global relay network with Viper player, ABR, relay racing, and sub-second latency.
+
+---
 
 ## Options
 
