@@ -52,7 +52,7 @@ Replace `my-stream` with your namespace. Works from `file://` — WebTransport h
 3. Run the publisher:
 
 ```bash
-moqpush-app --push-key mpk_XXX --tracks 2v1a --target-latency 500
+moqpush-app --push-key mpk_XXX --tracks 2v1a --target-latency 500 --port 9078
 ```
 
 4. Watch at `moqcdn.net/{namespace}`
