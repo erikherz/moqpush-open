@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+target/
+Cargo.lock
+package-lock.json
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

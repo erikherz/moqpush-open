@@ -1,0 +1,57 @@
+[workspace]
+members = ["moqpush-app"]
+resolver = "2"
+
+[workspace.dependencies]
+# MoQ transport + catalog
+# Thin fork of moq-dev/moq with 4 additions:
+# - MSF draft-00 catalog fields (targetLatency, generatedAt, namespace)
+# - CMSF draft-00 SAP fields + event timeline
+# - Session::stats() for QUIC transport stats
+# Will switch to moq-dev/moq main when PRs are merged upstream.
+moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+hang = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-native = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# Byte buffers
+bytes = "1.5"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Random
+rand = "0.9"
+
+# URL + base64
+url = "2.5"
+base64 = "0.22.1"
+
+# WebSocket client
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+futures-util = "0.3"

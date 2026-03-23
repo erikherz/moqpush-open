@@ -1,0 +1,48 @@
+[package]
+name = "moqpush-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# MoQ transport + catalog
+moq-lite = { workspace = true }
+moq-mux = { workspace = true }
+moq-msf = { workspace = true }
+moq-native = { workspace = true }
+hang = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP server (CMAF-IF ingest)
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+
+# Byte buffers
+bytes = { workspace = true }
+
+# HTTP client (worker auth + heartbeat + stats)
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Random
+rand = { workspace = true }
+
+# URL + base64
+url = { workspace = true }
+base64 = { workspace = true }
