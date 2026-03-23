@@ -22,6 +22,27 @@ moqpush-app --test --port 9078
 # Point your encoder at port 9078 — fragment info printed to console
 ```
 
+### Player
+
+Save this as an HTML file and open in Chrome — no server needed:
+
+```html
+<script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
+<video id="v" controls autoplay muted></video>
+<script>
+  shaka.polyfill.installAll();
+  const player = new shaka.Player();
+  player.attach(document.getElementById('v'));
+  player.configure({
+    streaming: { lowLatencyMode: true },
+    manifest: { msf: { namespaces: ['my-stream'] } }
+  });
+  player.load('https://draft-14.cloudflare.mediaoverquic.com/', undefined, 'application/msf');
+</script>
+```
+
+Replace `my-stream` with your namespace. Works from `file://` — WebTransport handles encryption.
+
 ### Managed CDN via moqcdn.net
 
 1. Create an account at [moqcdn.net](https://moqcdn.net)
@@ -49,27 +70,6 @@ No relay to run. Global relay network with Viper player, ABR, relay racing, and 
 | --target-latency | 2000 | Target latency in ms (published in catalog) |
 | --port | 9078 | HTTP CMAF-IF ingest port |
 | --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
-
-## Player
-
-Save this as an HTML file and open in Chrome — no server needed:
-
-```html
-<script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
-<video id="v" controls autoplay muted></video>
-<script>
-  shaka.polyfill.installAll();
-  const player = new shaka.Player();
-  player.attach(document.getElementById('v'));
-  player.configure({
-    streaming: { lowLatencyMode: true },
-    manifest: { msf: { namespaces: ['my-stream'] } }
-  });
-  player.load('https://draft-14.cloudflare.mediaoverquic.com/', undefined, 'application/msf');
-</script>
-```
-
-Replace `my-stream` with your namespace. Works from `file://` — WebTransport handles encryption.
 
 ## How It Works
 
