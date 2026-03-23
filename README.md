@@ -71,28 +71,6 @@ No relay to run. Global relay network with Viper player, ABR, relay racing, and 
 | --port | 9078 | HTTP CMAF-IF ingest port |
 | --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
 
-## How It Works
-
-```
-Encoder (Ateme/GPAC/FFmpeg)
-     | HTTP PUT (CMAF-IF, chunked transfer)
-     v
-moqpush-app (this binary)
-     | MoQ Transport (QUIC/WebTransport)
-     v
-MoQ Relay (Cloudflare, moqcdn, or self-hosted)
-     | MoQ Transport (WebTransport)
-     v
-Browser (Shaka Player or Viper Player)
-```
-
-- Encoder sends CMAF-IF segments via HTTP PUT with chunked transfer
-- Each PUT is one segment (~1.8s), containing ~16 fragments streamed in real-time
-- moqpush-app parses fragments as they arrive and publishes immediately via MoQ
-- MSF catalog with codec info, init segments, and target latency published automatically
-- `--tracks` waits for all init segments before connecting (multi-quality ABR support)
-- Protocol auto-negotiated with relay (moq-transport draft-14, moq-lite-02/03)
-
 ## Building
 
 ```bash
