@@ -75,6 +75,10 @@ No relay to run. Global relay network with Viper player, ABR, relay racing, and 
 | --port | 9078 | HTTP CMAF-IF ingest port |
 | --tls-disable-verify | false | Skip TLS cert verification (self-signed relay certs) |
 
+## Creating Source Files
+
+See [ffmpeg-gpac-how-to.md](ffmpeg-gpac-how-to.md) for creating CMAF-IF source files with FFmpeg and pushing them to moqpush with GPAC.
+
 ## Building
 
 ```bash
