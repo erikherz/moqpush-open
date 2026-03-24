@@ -232,7 +232,7 @@ async fn handle_request(
                     if fragments_sent == 0 {
                         publisher.update_sample_duration_from_fragment(tn, frag_data);
                     }
-                    if let Err(e) = publisher.send_fragment(tn, frag_data) {
+                    if let Err(e) = publisher.send_fragment(tn, frag_data, is_idr) {
                         warn!("Failed to send fragment: {}", e);
                     }
                     fragments_sent += 1;
@@ -306,7 +306,8 @@ async fn handle_request(
             }
         } else if has_moof(&data) {
             if let Some(tn) = resolver.resolve_fragment(&data, &path) {
-                if let Err(e) = publisher.send_fragment(&tn, &data) {
+                let idr = fragment_starts_with_idr(&data).unwrap_or(false);
+                if let Err(e) = publisher.send_fragment(&tn, &data, idr) {
                     warn!("Failed to send fragment: {}", e);
                 }
             }

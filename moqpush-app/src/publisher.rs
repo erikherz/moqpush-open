@@ -77,8 +77,10 @@ struct TrackState {
     /// First baseMediaDecodeTime seen for this track (used to rebase to 0).
     time_base: Option<u64>,
     track_type: TrackType,
-    /// Signal from HTTP ingest: new segment (HTTP PUT) started, force new group.
-    new_segment: bool,
+    /// Tracks whether we've received the first fragment (to create initial group).
+    has_group: bool,
+    /// Local group generation — compared to Publisher's group_generation.
+    group_generation: u64,
     /// Last baseMediaDecodeTime seen (pre-rebase).
     last_bdt: Option<u64>,
     /// Last fragment's duration in timescale ticks (estimated from BDT deltas).
@@ -116,6 +118,9 @@ pub struct Publisher {
     expected_audio: Option<u32>,
     /// Shared stats counters readable from the stats loop.
     pub stats: Arc<PublisherStats>,
+    /// Group generation counter — incremented on each video IDR.
+    /// Audio tracks create a new group when their local counter is behind this.
+    group_generation: u64,
 }
 
 impl Publisher {
@@ -136,6 +141,7 @@ impl Publisher {
             expected_video: None,
             expected_audio: None,
             stats,
+            group_generation: 0,
         }
     }
 
@@ -224,7 +230,8 @@ impl Publisher {
                     group: None,
                     time_base: None,
                     track_type: TrackType::Video,
-                    new_segment: false,
+                    has_group: false,
+                    group_generation: 0,
                     last_bdt: None,
                     last_frag_duration: None,
                 });
@@ -286,7 +293,8 @@ impl Publisher {
                     group: None,
                     time_base: None,
                     track_type: TrackType::Audio,
-                    new_segment: false,
+                    has_group: false,
+                    group_generation: 0,
                     last_bdt: None,
                     last_frag_duration: None,
                 });
@@ -379,6 +387,7 @@ impl Publisher {
         &mut self,
         track_name: &str,
         data: &[u8],
+        is_idr: bool,
     ) -> Result<()> {
         let state = self.tracks.get_mut(track_name)
             .ok_or_else(|| anyhow!("track not found: {}", track_name))?;
@@ -398,21 +407,27 @@ impl Publisher {
         }
 
         // Determine whether to start a new group.
-        // Groups are aligned with HTTP PUT boundaries (segments from the encoder).
-        // http_ingest calls start_segment() at the start of each PUT, which sets
-        // new_segment=true. We create a new MoQ group on that first fragment.
-        let need_new_group = if state.group.is_none() {
-            true
+        // Groups are aligned with IDR frames: each IDR starts a new MoQ Group,
+        // and subsequent non-IDR fragments are objects within that same Group.
+        // This ensures each Group is independently decodable and can be
+        // atomically dropped by the relay under congestion.
+        // Audio tracks sync to video by tracking a shared group generation counter.
+        let need_new_group = if !state.has_group {
+            true  // First fragment ever — always start a group
+        } else if track_type == TrackType::Video {
+            is_idr // Video: new group on each IDR (keyframe)
         } else {
-            state.new_segment
+            // Audio: new group when video has advanced to a new generation
+            state.group_generation < self.group_generation
         };
-        let is_idr = need_new_group && track_type == TrackType::Video;
-        if state.new_segment {
-            state.new_segment = false;
+
+        // Bump shared generation on video IDR
+        if track_type == TrackType::Video && is_idr && state.has_group {
+            self.group_generation += 1;
         }
 
         if need_new_group {
-            let first_group = state.group.is_none();
+            let first_group = !state.has_group;
             if let Some(mut group) = state.group.take() {
                 let _ = group.finish();
             }
@@ -429,6 +444,8 @@ impl Publisher {
                     .map_err(|e| anyhow!("failed to create group: {}", e))?
             };
             state.group = Some(group);
+            state.has_group = true;
+            state.group_generation = self.group_generation;
         }
 
         // Rebase timestamps: subtract a synchronized base so audio and video start near 0
@@ -521,10 +538,10 @@ impl Publisher {
     }
 
     /// Signal that a new HTTP PUT (segment) has started for this track.
-    /// The next call to send_fragment() will create a new MoQ group.
+    /// Group creation is now driven by IDR detection in send_fragment(),
+    /// but we still track segment count for stats.
     pub fn start_segment(&mut self, track_name: &str) {
-        if let Some(state) = self.tracks.get_mut(track_name) {
-            state.new_segment = true;
+        if self.tracks.contains_key(track_name) {
             self.stats.segments_sent.fetch_add(1, Ordering::Relaxed);
         }
     }
