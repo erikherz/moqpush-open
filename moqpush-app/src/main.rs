@@ -151,10 +151,14 @@ async fn main() -> Result<()> {
 
         let auth_body: serde_json::Value = auth_resp.json().await?;
         let namespace = auth_body["namespace"].as_str().unwrap_or("").to_string();
-        let relay_url = auth_body["relay_url"]
+        let relay_url_raw = auth_body["relay_url"]
             .as_str()
-            .unwrap_or(DEFAULT_RELAY)
-            .to_string();
+            .unwrap_or(DEFAULT_RELAY);
+        let relay_url = if relay_url_raw.starts_with("https://") || relay_url_raw.starts_with("http://") {
+            relay_url_raw.to_string()
+        } else {
+            format!("https://{}", relay_url_raw)
+        };
         let jwt = auth_body["jwt"].as_str().unwrap_or("").to_string();
 
         if jwt.is_empty() {
