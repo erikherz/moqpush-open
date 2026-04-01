@@ -179,8 +179,10 @@ async fn main() -> Result<()> {
     }
 
     // Create moq-lite content model
+    // Broadcast name is empty — the namespace is conveyed via the URL path (root),
+    // which the relay prepends automatically. Using both would double-scope.
     let origin = Origin::produce();
-    let mut broadcast = origin.create_broadcast(&namespace)
+    let mut broadcast = origin.create_broadcast("")
         .ok_or_else(|| anyhow::anyhow!("failed to create broadcast for namespace '{}'", namespace))?;
     let catalog = CatalogProducer::new(&mut broadcast)
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
