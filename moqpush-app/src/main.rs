@@ -59,10 +59,6 @@ struct Args {
     #[arg(long)]
     tls_disable_verify: bool,
 
-    /// Relay protocol: v14 (Cloudflare draft-14) or lite (moq-lite, namespace in URL path)
-    #[arg(long, default_value = "v14")]
-    protocol: String,
-
 }
 
 /// Parse a track spec like "3v1a" into (video_count, audio_count).
@@ -185,10 +181,8 @@ async fn main() -> Result<()> {
     // Create moq-lite content model
     // v14: broadcast name = namespace (Cloudflare reads it from SUBSCRIBE)
     // lite: broadcast name = empty (namespace conveyed via URL path root, relay prepends it)
-    let use_lite = args.protocol == "lite";
-    let broadcast_name = if use_lite { "" } else { &namespace };
     let origin = Origin::produce();
-    let mut broadcast = origin.create_broadcast(broadcast_name)
+    let mut broadcast = origin.create_broadcast(&namespace)
         .ok_or_else(|| anyhow::anyhow!("failed to create broadcast for namespace '{}'", namespace))?;
     let catalog = CatalogProducer::new(&mut broadcast)
         .map_err(|e| anyhow::anyhow!("failed to create catalog: {}", e))?;
@@ -234,12 +228,6 @@ async fn main() -> Result<()> {
     info!("All init segments received — connecting to relay at {}...", relay_url);
 
     let mut relay_url_parsed: url::Url = relay_url.parse()?;
-    // lite mode: append namespace to URL path (relay uses it as root for content scoping)
-    // v14 mode: leave URL as-is (Cloudflare ignores path, reads namespace from SUBSCRIBE)
-    if use_lite && managed_info.is_none() {
-        let path = relay_url_parsed.path().trim_end_matches('/').to_string();
-        relay_url_parsed.set_path(&format!("{}/{}", path, namespace));
-    }
     if !jwt.is_empty() {
         relay_url_parsed.query_pairs_mut().append_pair("jwt", &jwt);
     }
