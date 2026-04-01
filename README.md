@@ -24,7 +24,11 @@ moqpush-app --test --port 9078
 
 ### Player
 
-Save this as an HTML file and open in Chrome — no server needed:
+**Option 1: [moqplay.com](https://moqplay.com)** — open source web player, no install needed
+
+Visit [moqplay.com](https://moqplay.com), enter your relay URL and namespace, and play. Supports MoQ Lite and MoQ v14 (Cloudflare) relays. Source: [github.com/erikherz/moqplay](https://github.com/erikherz/moqplay)
+
+**Option 2: Shaka Player** — save as HTML, open in Chrome:
 
 ```html
 <script src="https://shaka-project.github.io/shaka-player/dist/shaka-player.experimental.debug.js"></script>
