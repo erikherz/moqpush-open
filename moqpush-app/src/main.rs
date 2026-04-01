@@ -291,7 +291,7 @@ async fn main() -> Result<()> {
             _ = transport_interval.tick() => {
                 let t = session.stats();
                 *pub_stats.transport.lock().unwrap() = Some(serde_json::json!({
-                    "rtt_ms": t.rtt.map(|d| d.as_secs_f64() * 1000.0),
+                    "rtt_ms": t.rtt.map(|d: std::time::Duration| d.as_secs_f64() * 1000.0),
                     "bytes_sent": t.bytes_sent,
                     "bytes_received": t.bytes_received,
                     "bytes_lost": t.bytes_lost,

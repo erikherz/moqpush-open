@@ -9,11 +9,11 @@ resolver = "2"
 # - CMSF draft-00 SAP fields + event timeline
 # - Session::stats() for QUIC transport stats
 # Will switch to moq-dev/moq main when PRs are merged upstream.
-moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
-hang = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
-moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
-moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
-moq-native = { git = "https://github.com/erikherz/moq", branch = "moqpush-deps" }
+moq-lite = { git = "https://github.com/erikherz/moq", branch = "moqpush-lite03" }
+hang = { git = "https://github.com/erikherz/moq", branch = "moqpush-lite03" }
+moq-mux = { git = "https://github.com/erikherz/moq", branch = "moqpush-lite03" }
+moq-msf = { git = "https://github.com/erikherz/moq", branch = "moqpush-lite03" }
+moq-native = { git = "https://github.com/erikherz/moq", branch = "moqpush-lite03" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

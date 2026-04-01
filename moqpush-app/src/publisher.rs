@@ -16,6 +16,33 @@ use moq_mux::CatalogProducer;
 
 use crate::mp4;
 
+// --- SAP timeline helpers (previously in moq-mux, removed upstream) ---
+
+/// Create an MSF Track entry for a CMSF SAP-type event timeline.
+fn sap_timeline_track(name: &str) -> moq_msf::Track {
+    moq_msf::Track {
+        name: name.to_string(),
+        packaging: moq_msf::Packaging::EventTimeline,
+        is_live: true,
+        role: None,
+        codec: None,
+        width: None,
+        height: None,
+        framerate: None,
+        samplerate: None,
+        channel_config: None,
+        bitrate: None,
+        init_data: None,
+        render_group: None,
+        alt_group: None,
+    }
+}
+
+/// Format a CMSF SAP event JSON payload.
+fn sap_event_json(sap_type: u32, ept_ms: u64) -> String {
+    format!("{{\"l\":[{},{}]}}", sap_type, ept_ms)
+}
+
 /// Video structure snapshot from the most recent segment.
 #[derive(Clone, Default)]
 pub struct VideoStructure {
@@ -314,15 +341,8 @@ impl Publisher {
 
     pub fn publish_msf_catalog(&mut self) {
         let cat = self.catalog.lock();
-        let mut msf = moq_mux::msf::to_msf_with_namespace(&cat, None);
+        let mut msf = moq_mux::msf::to_msf(&cat);
         drop(cat);
-
-        // Set target latency at track level per MSF draft-00 §5.1.16
-        if let Some(latency) = self.target_latency_ms {
-            for track in &mut msf.tracks {
-                track.target_latency = Some(latency);
-            }
-        }
 
         let b64 = base64::engine::general_purpose::STANDARD;
         for track in &mut msf.tracks {
@@ -333,11 +353,25 @@ impl Publisher {
 
         // Add CMSF SAP event timeline track to catalog if created
         if self.sap_track.is_some() {
-            msf.tracks.push(moq_mux::msf::sap_timeline_track("sap-timeline", None));
+            msf.tracks.push(sap_timeline_track("sap-timeline"));
         }
 
         match msf.to_string() {
             Ok(json) => {
+                // Inject targetLatency into catalog JSON (field removed from moq_msf::Track upstream)
+                let json = if let Some(latency) = self.target_latency_ms {
+                    if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&json) {
+                        if let Some(tracks) = val.get_mut("tracks").and_then(|t| t.as_array_mut()) {
+                            for track in tracks.iter_mut() {
+                                if let Some(obj) = track.as_object_mut() {
+                                    obj.insert("targetLatency".to_string(), serde_json::json!(latency));
+                                }
+                            }
+                        }
+                        serde_json::to_string(&val).unwrap_or(json)
+                    } else { json }
+                } else { json };
+
                 let json_len = json.len();
 
                 // Store catalog snapshot (without initData) in shared stats
@@ -496,7 +530,7 @@ impl Publisher {
                     0
                 };
 
-                let json = moq_mux::msf::sap_event_json(sap_type, ept_ms);
+                let json = sap_event_json(sap_type, ept_ms);
 
                 // New group on IDR (aligns with media group boundaries)
                 if is_idr {
